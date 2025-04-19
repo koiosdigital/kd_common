@@ -1,4 +1,4 @@
-#include "device_identifiers.h"
+#include "kd_common.h"
 
 #include "stdlib.h"
 #include "string.h"
