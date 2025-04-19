@@ -68,7 +68,7 @@ void provisioning_task(void* pvParameter) {
             switch (notification) {
             case STOP_PROVISIONING:
                 if (provisioning_started) {
-                    vTaskDelay(1000);
+                    vTaskDelay(5000);
                     ESP_LOGI(TAG, "stopping");
                     wifi_prov_mgr_stop_provisioning();
                     provisioning_started = false;
