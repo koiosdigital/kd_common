@@ -94,7 +94,6 @@ static void register_heap(void)
         .func = &heap_size,
     };
     ESP_ERROR_CHECK(esp_console_cmd_register(&heap_cmd));
-
 }
 
 static int tasks_info(int argc, char** argv)
@@ -257,7 +256,6 @@ static void register_get_csr(void)
 
 static int get_ds_params(int argc, char** argv)
 {
-
     char* json_string = crypto_get_ds_params_json();
 
     if (json_string == NULL) {
@@ -317,7 +315,6 @@ static void register_set_ds_params(void)
 
 static int wifi_reset(int argc, char** argv)
 {
-
     kd_common_clear_wifi_credentials();
     return 0;
 }

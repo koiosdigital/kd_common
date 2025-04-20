@@ -11,7 +11,6 @@
 static const char* TAG = "kd_common";
 
 void kd_common_init() {
-
     ESP_LOGI(TAG, "initializing");
 
     // Initialize NVS

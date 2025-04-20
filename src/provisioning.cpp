@@ -150,7 +150,6 @@ void provisioning_event_handler(void* arg, esp_event_base_t event_base, int32_t 
 }
 
 void provisioning_init() {
-
     ESP_LOGI(TAG, "initializing");
 
     esp_event_handler_register(WIFI_PROV_EVENT, ESP_EVENT_ANY_ID, &provisioning_event_handler, NULL);

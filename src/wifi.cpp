@@ -32,7 +32,6 @@ void kd_common_clear_wifi_credentials() {
 
 //MARK: Private API
 void wifi_init() {
-
     ESP_LOGI(TAG, "initializing");
 
     esp_netif_init();
