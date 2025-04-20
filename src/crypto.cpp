@@ -496,40 +496,17 @@ esp_err_t crypto_store_ds_params_json(char* params) {
 
     if (ds_params == NULL) {
         free(params);
-        ESP_LOGE(TAG, "failed to parse json, input: %s", params);
         return ESP_ERR_INVALID_ARG;
     }
 
-    if (cJSON_GetObjectItem(ds_params, "ds_key_id") == NULL) {
+    if (cJSON_GetObjectItem(ds_params, "ds_key_id") == NULL || cJSON_GetObjectItem(ds_params, "rsa_len") == NULL || cJSON_GetObjectItem(ds_params, "cipher_c") == NULL || cJSON_GetObjectItem(ds_params, "iv") == NULL) {
         ESP_LOGE(TAG, "ds_key_id not found");
         free(params);
         cJSON_Delete(ds_params);
         return ESP_ERR_INVALID_ARG;
     }
 
-    if (cJSON_GetObjectItem(ds_params, "rsa_len") == NULL) {
-        ESP_LOGE(TAG, "rsa_len not found");
-        free(params);
-        cJSON_Delete(ds_params);
-        return ESP_ERR_INVALID_ARG;
-    }
-
-    if (cJSON_GetObjectItem(ds_params, "cipher_c") == NULL) {
-        ESP_LOGE(TAG, "cipher_c not found");
-        free(params);
-        cJSON_Delete(ds_params);
-        return ESP_ERR_INVALID_ARG;
-    }
-
-    if (cJSON_GetObjectItem(ds_params, "iv") == NULL) {
-        ESP_LOGE(TAG, "iv not found");
-        free(params);
-        cJSON_Delete(ds_params);
-        return ESP_ERR_INVALID_ARG;
-    }
-
     uint8_t ds_key_id = (uint8_t)cJSON_GetObjectItem(ds_params, "ds_key_id")->valueint;
-
     uint16_t rsa_length = (uint16_t)cJSON_GetObjectItem(ds_params, "rsa_len")->valueint;
 
     //base64 decode c and iv

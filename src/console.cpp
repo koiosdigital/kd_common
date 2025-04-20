@@ -62,7 +62,7 @@ static int console_out(const char* format, ...)
 //MARK: Commands
 static int free_mem(int argc, char** argv)
 {
-    console_out("internal: %"PRIu32" total: %"PRIu32"\n", esp_get_free_internal_heap_size(), esp_get_free_heap_size());
+    console_out("internal: %" PRIu32 " total: %" PRIu32 "\n", esp_get_free_internal_heap_size(), esp_get_free_heap_size());
     return 0;
 }
 
@@ -81,7 +81,7 @@ static void register_free(void)
 static int heap_size(int argc, char** argv)
 {
     uint32_t heap_size = heap_caps_get_minimum_free_size(MALLOC_CAP_DEFAULT);
-    console_out("min heap size: %"PRIu32"\n", heap_size);
+    console_out("min heap size: %" PRIu32 "\n", heap_size);
     return 0;
 }
 
