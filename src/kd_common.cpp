@@ -7,6 +7,7 @@
 #include "console.h"
 #include "provisioning.h"
 #include "wifi.h"
+#include "ota.h"
 
 static const char* TAG = "kd_common";
 
@@ -25,6 +26,10 @@ void kd_common_init() {
     crypto_init();
     provisioning_init();
     wifi_init();
+
+#ifdef ENABLE_OTA
+    ota_init();
+#endif
 }
 
 void kd_common_reverse_bytes(uint8_t* data, size_t len) {
