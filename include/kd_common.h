@@ -26,6 +26,11 @@ typedef enum ProvisioningTaskNotification_t {
     RESET_SM_ON_FAILURE = 3,
 } ProvisioningTaskNotification_t;
 
+typedef enum ProvisioningPOPTokenFormat_t {
+    ALPHA_8 = 0,
+    NUMERIC_6 = 1,
+} ProvisioningPOPTokenFormat_t;
+
 void kd_common_init();
 void kd_common_reverse_bytes(uint8_t* data, size_t len);
 
@@ -44,3 +49,4 @@ char* kd_common_run_command(char* input, int* return_code);
 void kd_common_wifi_disconnect();
 void kd_common_clear_wifi_credentials();
 bool kd_common_is_wifi_connected();
+void kd_common_set_provisioning_pop_token_format(ProvisioningPOPTokenFormat_t format);
