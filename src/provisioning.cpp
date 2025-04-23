@@ -52,7 +52,7 @@ char* kd_common_provisioning_get_pop_token() {
         provisioning_pop_token = (char*)calloc(7, sizeof(char));
         esp_fill_random(provisioning_pop_token, 6);
         for (int i = 0; i < 6; i++) {
-            provisioning_pop_token[i] = (provisioning_pop_token[i] % 10) + '0';
+            provisioning_pop_token[i] = (provisioning_pop_token[i] % 6) + '1';
         }
         return provisioning_pop_token;
     }
