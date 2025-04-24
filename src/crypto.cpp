@@ -162,6 +162,10 @@ esp_err_t kd_common_clear_claim_token() {
         ESP_LOGE(TAG, "nvs commit failed");
         goto exit;
     }
+
+exit:
+    nvs_close(handle);
+    return error;
 }
 
 //MARK: Private API
