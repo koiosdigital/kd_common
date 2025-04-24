@@ -326,7 +326,7 @@ static int set_claim_token(int argc, char** argv)
         return 1;
     }
 
-    const char* claim_token_str = set_claim_token_args.ds_params->sval[0];
+    const char* claim_token_str = set_claim_token_args.claim_token->sval[0];
     return crypto_set_claim_token((char*)claim_token_str, strlen(claim_token_str));
 }
 
