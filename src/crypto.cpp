@@ -139,6 +139,10 @@ esp_err_t kd_common_get_claim_token(char* buffer, size_t* len) {
         ESP_LOGE(TAG, "nvs get claim token failed");
         goto exit;
     }
+
+exit:
+    nvs_close(handle);
+    return error;
 }
 
 esp_err_t kd_common_clear_claim_token() {
