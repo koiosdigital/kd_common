@@ -56,6 +56,15 @@ CryptoState_t kd_common_crypto_get_state() {
         state = CRYPTO_STATE_VALID_CERT;
     }
 
+    esp_ds_data_ctx_t* ds_data_ctx = kd_common_crypto_get_ctx();
+    if (ds_data_ctx == NULL) {
+        state = CRYPTO_STATE_BAD_DS_PARAMS;
+    }
+    else {
+        free(ds_data_ctx->esp_ds_data);
+        free(ds_data_ctx);
+    }
+
     return state;
 }
 
@@ -108,6 +117,51 @@ error:
     }
     nvs_close(handle);
     return NULL;
+}
+
+esp_err_t kd_common_get_claim_token(char* buffer, size_t* len) {
+    esp_err_t error;
+    nvs_handle handle;
+
+    error = nvs_open(NVS_CRYPTO_NAMESPACE, NVS_READWRITE, &handle);
+    if (error != ESP_OK) {
+        ESP_LOGE(TAG, "nvs open failed");
+        goto exit;
+    }
+
+    if (buffer == NULL) {
+        error = nvs_find_key(handle, NVS_CRYPTO_CLAIM_TOKEN, NULL);
+        goto exit;
+    }
+
+    error = nvs_get_blob(handle, NVS_CRYPTO_CLAIM_TOKEN, buffer, len);
+    if (error != ESP_OK) {
+        ESP_LOGE(TAG, "nvs get claim token failed");
+        goto exit;
+    }
+}
+
+esp_err_t kd_common_clear_claim_token() {
+    esp_err_t error;
+    nvs_handle handle;
+
+    error = nvs_open(NVS_CRYPTO_NAMESPACE, NVS_READWRITE, &handle);
+    if (error != ESP_OK) {
+        ESP_LOGE(TAG, "nvs open failed");
+        goto exit;
+    }
+
+    error = nvs_erase_key(handle, NVS_CRYPTO_CLAIM_TOKEN);
+    if (error != ESP_OK) {
+        ESP_LOGE(TAG, "nvs erase claim token failed");
+        goto exit;
+    }
+
+    error = nvs_commit(handle);
+    if (error != ESP_OK) {
+        ESP_LOGE(TAG, "nvs commit failed");
+        goto exit;
+    }
 }
 
 //MARK: Private API
@@ -445,6 +499,33 @@ esp_err_t crypto_set_device_cert(char* buffer, size_t len) {
     error = nvs_set_blob(handle, NVS_CRYPTO_DEVICE_CERT, buffer, len);
     if (error != ESP_OK) {
         ESP_LOGE(TAG, "nvs set device cert failed");
+        goto exit;
+    }
+
+    error = nvs_commit(handle);
+    if (error != ESP_OK) {
+        ESP_LOGE(TAG, "nvs commit failed");
+        goto exit;
+    }
+
+exit:
+    nvs_close(handle);
+    return error;
+}
+
+esp_err_t crypto_set_claim_token(char* buffer, size_t len) {
+    esp_err_t error;
+    nvs_handle handle;
+
+    error = nvs_open(NVS_CRYPTO_NAMESPACE, NVS_READWRITE, &handle);
+    if (error != ESP_OK) {
+        ESP_LOGE(TAG, "nvs open failed");
+        goto exit;
+    }
+
+    error = nvs_set_blob(handle, NVS_CRYPTO_CLAIM_TOKEN, buffer, len);
+    if (error != ESP_OK) {
+        ESP_LOGE(TAG, "nvs set claim token failed");
         goto exit;
     }
 
