@@ -314,6 +314,59 @@ static void register_set_ds_params(void)
 }
 
 static struct {
+    struct arg_str* cert;
+    struct arg_end* end;
+} set_device_cert_args;
+
+static int set_device_cert(int argc, char** argv)
+{
+    int nerrors = arg_parse(argc, argv, (void**)&set_device_cert_args);
+    if (nerrors != 0) {
+        arg_print_errors(stderr, set_device_cert_args.end, argv[0]);
+        return 1;
+    }
+
+    const char* cert_b64 = set_device_cert_args.cert->sval[0];
+
+    size_t cert_len = strlen(cert_b64);
+    size_t decoded_len = 0;
+    char* decoded_cert = (char*)malloc(cert_len);
+    if (decoded_cert == NULL) {
+        ESP_LOGE(TAG, "failed to allocate buffer for decoded cert");
+        return 1;
+    }
+    mbedtls_base64_decode((unsigned char*)decoded_cert, cert_len, &decoded_len, (unsigned char*)cert_b64, cert_len);
+    if (decoded_len == 0) {
+        ESP_LOGE(TAG, "failed to decode cert");
+        free(decoded_cert);
+        return 1;
+    }
+    esp_err_t error = crypto_set_device_cert(decoded_cert, decoded_len);
+    free(decoded_cert);
+    if (error != ESP_OK) {
+        ESP_LOGE(TAG, "failed to set device cert");
+        return 1;
+    }
+    console_out("{\"error\":false}\n");
+    return 0;
+}
+
+static void register_set_device_cert(void)
+{
+    set_device_cert_args.cert = arg_str1(NULL, NULL, "base64 cert", "base64 pem");
+    set_device_cert_args.end = arg_end(1);
+
+    const esp_console_cmd_t cmd = {
+        .command = "set_device_cert",
+        .help = "Set device cert",
+        .hint = NULL,
+        .func = &set_device_cert,
+        .argtable = &set_device_cert_args
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&cmd));
+}
+
+static struct {
     struct arg_str* claim_token;
     struct arg_end* end;
 } set_claim_token_args;
@@ -396,6 +449,7 @@ void console_init() {
     register_tasks();
     register_crypto_status();
     register_get_csr();
+    register_set_device_cert();
     register_get_ds_params();
     register_set_ds_params();
     register_set_claim_token();
