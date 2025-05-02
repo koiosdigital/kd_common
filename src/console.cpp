@@ -327,20 +327,21 @@ static int set_device_cert(int argc, char** argv)
     }
 
     const char* cert_b64 = set_device_cert_args.cert->sval[0];
-
     size_t cert_len = strlen(cert_b64);
     size_t decoded_len = 0;
-    char* decoded_cert = (char*)malloc(cert_len);
+    char* decoded_cert = (char*)malloc(4096);
     if (decoded_cert == NULL) {
         ESP_LOGE(TAG, "failed to allocate buffer for decoded cert");
         return 1;
     }
-    mbedtls_base64_decode((unsigned char*)decoded_cert, cert_len, &decoded_len, (unsigned char*)cert_b64, cert_len);
+    memset(decoded_cert, 0, 4096);
+    mbedtls_base64_decode((unsigned char*)decoded_cert, 4096, &decoded_len, (unsigned char*)cert_b64, cert_len);
     if (decoded_len == 0) {
         ESP_LOGE(TAG, "failed to decode cert");
         free(decoded_cert);
         return 1;
     }
+
     esp_err_t error = crypto_set_device_cert(decoded_cert, decoded_len);
     free(decoded_cert);
     if (error != ESP_OK) {
