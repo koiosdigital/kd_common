@@ -48,6 +48,12 @@ exit:
 
 CryptoState_t kd_common_crypto_get_state() {
     CryptoState_t state = CRYPTO_STATE_UNINITIALIZED;
+
+    if (xSemaphoreTake(keygen_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+        state = CRYPTO_STATE_KEY_GENERATED;
+        xSemaphoreGive(keygen_mutex);
+    }
+
     if (crypto_get_csr(NULL, NULL) == ESP_OK) {
         state = CRYPTO_STATE_VALID_CSR;
     }
@@ -56,13 +62,18 @@ CryptoState_t kd_common_crypto_get_state() {
         state = CRYPTO_STATE_VALID_CERT;
     }
 
-    esp_ds_data_ctx_t* ds_data_ctx = kd_common_crypto_get_ctx();
-    if (ds_data_ctx == NULL) {
-        state = CRYPTO_STATE_BAD_DS_PARAMS;
-    }
-    else {
-        free(ds_data_ctx->esp_ds_data);
-        free(ds_data_ctx);
+    bool has_fuses = esp_efuse_get_key_purpose(DS_KEY_BLOCK) ==
+        ESP_EFUSE_KEY_PURPOSE_HMAC_DOWN_DIGITAL_SIGNATURE;
+
+    if (has_fuses) {
+        esp_ds_data_ctx_t* ds_data_ctx = kd_common_crypto_get_ctx();
+        if (ds_data_ctx == NULL) {
+            state = CRYPTO_STATE_BAD_DS_PARAMS;
+        }
+        else {
+            free(ds_data_ctx->esp_ds_data);
+            free(ds_data_ctx);
+        }
     }
 
     return state;

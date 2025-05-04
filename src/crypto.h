@@ -12,7 +12,7 @@
 #define NVS_CRYPTO_CSR "csr"
 #define NVS_CRYPTO_CLAIM_TOKEN "claim_token" //really just the user's access token, provided by BLE provisioning
 
-#define DS_KEY_BLOCK EFUSE_BLK_KEY2
+#define DS_KEY_BLOCK EFUSE_BLK_KEY3
 #define KEY_SIZE 4096
 
 esp_err_t crypto_init();
