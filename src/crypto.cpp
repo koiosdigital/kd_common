@@ -379,6 +379,9 @@ exit:
 esp_err_t ensure_key_exists() {
     esp_err_t error = ESP_OK;
 
+    keygen_mutex = xSemaphoreCreateBinary();
+    xSemaphoreGive(keygen_mutex);
+
     bool has_fuses = esp_efuse_get_key_purpose(DS_KEY_BLOCK) ==
         ESP_EFUSE_KEY_PURPOSE_HMAC_DOWN_DIGITAL_SIGNATURE;
 
@@ -397,9 +400,6 @@ esp_err_t ensure_key_exists() {
     mbedtls_mpi_init(&rinv);
 
     uint32_t mprime = 0;
-
-    keygen_mutex = xSemaphoreCreateBinary();
-    xSemaphoreGive(keygen_mutex);
 
     // get RSA keypair on APP_CPU
     xTaskCreatePinnedToCore(keygen_task, "keygen_task", 8192, (void*)&rsa, 5, NULL, 1);
