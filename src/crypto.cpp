@@ -1,5 +1,7 @@
 #include "crypto.h"
 
+#ifndef KD_COMMON_CRYPTO_DISABLE
+
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 
@@ -655,3 +657,5 @@ esp_err_t crypto_init(void) {
     ensure_key_exists();
     return ESP_OK;
 }
+
+#endif

@@ -1,12 +1,16 @@
 #pragma once
 
+#ifndef KD_COMMON_CRYPTO_DISABLE
 #include "esp_ds.h"
+#endif
+
 #include "stdlib.h"
 
 #ifndef DEVICE_NAME_PREFIX
 #define DEVICE_NAME_PREFIX "KD"
 #endif
 
+#ifndef KD_COMMON_CRYPTO_DISABLE
 typedef struct esp_ds_data_ctx {
     esp_ds_data_t* esp_ds_data;
     uint8_t efuse_key_id;
@@ -20,6 +24,7 @@ typedef enum CryptoState_t {
     CRYPTO_STATE_VALID_CERT,
     CRYPTO_STATE_BAD_DS_PARAMS,
 } CryptoState_t;
+#endif
 
 typedef enum ProvisioningTaskNotification_t {
     STOP_PROVISIONING = 1,
@@ -28,19 +33,22 @@ typedef enum ProvisioningTaskNotification_t {
 } ProvisioningTaskNotification_t;
 
 typedef enum ProvisioningPOPTokenFormat_t {
-    ALPHA_8 = 0,
-    NUMERIC_6 = 1,
+    NONE = 0,
+    ALPHA_8 = 1,
+    NUMERIC_6 = 2,
 } ProvisioningPOPTokenFormat_t;
 
 void kd_common_init();
 void kd_common_reverse_bytes(uint8_t* data, size_t len);
 
+#ifndef KD_COMMON_CRYPTO_DISABLE
 esp_ds_data_ctx_t* kd_common_crypto_get_ctx();
 esp_err_t kd_common_get_device_cert(char* buffer, size_t* len);
 esp_err_t kd_common_get_claim_token(char* buffer, size_t* len);
 esp_err_t kd_common_clear_claim_token();
 
 CryptoState_t kd_common_crypto_get_state();
+#endif
 
 char* kd_common_get_device_name();
 

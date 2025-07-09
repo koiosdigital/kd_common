@@ -19,7 +19,7 @@
 static const char* TAG = "kd_ble_prov";
 
 TaskHandle_t xProvisioningTask = nullptr;
-ProvisioningPOPTokenFormat_t provisioning_pop_token_format = ProvisioningPOPTokenFormat_t::ALPHA_8;
+ProvisioningPOPTokenFormat_t provisioning_pop_token_format = ProvisioningPOPTokenFormat_t::NONE;
 
 //MARK: Public API
 void kd_common_notify_provisioning_task(ProvisioningTaskNotification_t notification) {
@@ -85,6 +85,7 @@ void provisioning_task(void* pvParameter) {
 
     while (true) {
         if (xTaskNotifyWait(0, ULONG_MAX, (uint32_t*)&notification, portMAX_DELAY) == pdTRUE) {
+            char* pop = nullptr;
             switch (notification) {
             case STOP_PROVISIONING:
                 if (provisioning_started) {
@@ -100,7 +101,15 @@ void provisioning_task(void* pvParameter) {
                 }
                 wifi_prov_mgr_init({ .scheme = wifi_prov_scheme_ble, .scheme_event_handler = WIFI_PROV_SCHEME_BLE_EVENT_HANDLER_FREE_BTDM });
                 wifi_prov_mgr_endpoint_create(BLE_CONSOLE_ENDPOINT_NAME);
-                wifi_prov_mgr_start_provisioning(WIFI_PROV_SECURITY_1, kd_common_provisioning_get_pop_token(), kd_common_get_device_name(), NULL);
+
+                pop = kd_common_provisioning_get_pop_token();
+                if (pop == nullptr) {
+                    wifi_prov_mgr_start_provisioning(WIFI_PROV_SECURITY_0, NULL, kd_common_get_device_name(), NULL);
+                }
+                else {
+                    wifi_prov_mgr_start_provisioning(WIFI_PROV_SECURITY_1, kd_common_provisioning_get_pop_token(), kd_common_get_device_name(), NULL);
+                }
+
                 wifi_prov_mgr_endpoint_register(BLE_CONSOLE_ENDPOINT_NAME, ble_console_endpoint, NULL);
                 provisioning_started = true;
                 ESP_LOGI(TAG, "started");
@@ -164,10 +173,6 @@ void provisioning_event_handler(void* arg, esp_event_base_t event_base, int32_t 
         case WIFI_PROV_END: {
             wifi_prov_mgr_deinit();
             kd_common_notify_provisioning_task(ProvisioningTaskNotification_t::STOP_PROVISIONING);
-            break;
-        }
-        case WIFI_PROV_START: {
-            ESP_LOGI(TAG, "provision::%s::%s", kd_common_get_device_name(), kd_common_provisioning_get_pop_token());
             break;
         }
         default:

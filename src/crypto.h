@@ -12,8 +12,10 @@
 #define NVS_CRYPTO_CSR "csr"
 #define NVS_CRYPTO_CLAIM_TOKEN "claim_token" //really just the user's access token, provided by BLE provisioning
 
-#define DS_KEY_BLOCK EFUSE_BLK_KEY3
+#define DS_KEY_BLOCK EFUSE_BLK_KEY4
 #define KEY_SIZE 4096
+
+#ifndef KD_COMMON_CRYPTO_DISABLE
 
 esp_err_t crypto_init();
 esp_err_t crypto_get_csr(char* buffer, size_t* len);
@@ -23,3 +25,4 @@ esp_err_t crypto_set_device_cert(char* buffer, size_t len);
 esp_err_t crypto_set_claim_token(char* buffer, size_t len);
 char* crypto_get_ds_params_json();
 esp_err_t crypto_store_ds_params_json(char* params);
+#endif

@@ -96,32 +96,6 @@ static void register_heap(void)
     ESP_ERROR_CHECK(esp_console_cmd_register(&heap_cmd));
 }
 
-static int tasks_info(int argc, char** argv)
-{
-    const size_t bytes_per_task = 40; /* see vTaskList description */
-    char* task_list_buffer = (char*)malloc(uxTaskGetNumberOfTasks() * bytes_per_task);
-    if (task_list_buffer == NULL) {
-        ESP_LOGE(TAG, "failed to allocate buffer for vTaskList output");
-        return 1;
-    }
-    console_out("Task Name\tStatus\tPrio\tHWM\tTask#\n");
-    vTaskList(task_list_buffer);
-    console_out(task_list_buffer);
-    free(task_list_buffer);
-    return 0;
-}
-
-static void register_tasks(void)
-{
-    const esp_console_cmd_t cmd = {
-        .command = "tasks",
-        .help = "Get information about running tasks",
-        .hint = NULL,
-        .func = &tasks_info,
-    };
-    ESP_ERROR_CHECK(esp_console_cmd_register(&cmd));
-}
-
 /** log_level command changes log level via esp_log_level_set */
 
 static struct {
@@ -202,6 +176,7 @@ static void register_log_level(void)
     nvs_close(handle);
 }
 
+#ifndef KD_COMMON_CRYPTO_DISABLE
 static int crypto_status(int argc, char** argv)
 {
     console_out("{\"status\":%i,\"error\":false}\n", kd_common_crypto_get_state());
@@ -398,7 +373,7 @@ static void register_set_claim_token(void)
     };
     ESP_ERROR_CHECK(esp_console_cmd_register(&cmd));
 }
-
+#endif // KD_COMMON_CRYPTO_DISABLE
 
 static int wifi_reset(int argc, char** argv)
 {
@@ -447,17 +422,21 @@ void console_init() {
     register_free();
     register_heap();
     register_log_level();
-    register_tasks();
+
+#ifndef KD_COMMON_CRYPTO_DISABLE
     register_crypto_status();
     register_get_csr();
     register_set_device_cert();
     register_get_ds_params();
     register_set_ds_params();
     register_set_claim_token();
+#endif
     register_wifi_reset();
 
+#if SOC_USB_SERIAL_JTAG_SUPPORTED
     esp_console_dev_usb_serial_jtag_config_t hw_config = ESP_CONSOLE_DEV_USB_SERIAL_JTAG_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_console_new_repl_usb_serial_jtag(&hw_config, &repl_config, &repl));
+#endif
 
     use_printf = true;
     ESP_ERROR_CHECK(esp_console_start_repl(repl));
