@@ -33,7 +33,7 @@ void ota_task(void* pvParameter) {
         }
 
         if (has_done_boot_check) {
-            vTaskDelay(pdMS_TO_TICKS(1000 * 60 * 6));
+            vTaskDelay(pdMS_TO_TICKS(1000 * 60 * 60 * 3)); // check for updates every 3 hours
         }
 
         ESP_LOGI(TAG, "checking for updates");
@@ -50,13 +50,10 @@ void ota_task(void* pvParameter) {
         const esp_app_desc_t* app_desc = esp_app_get_description();
 
         esp_http_client_set_header(http_client, "x-firmware-project", app_desc->project_name);
-        ESP_LOGI(TAG, "project name: %s", app_desc->project_name);
         esp_http_client_set_header(http_client, "x-firmware-version", app_desc->version);
-        ESP_LOGI(TAG, "version: %s", app_desc->version);
 
 #ifdef FIRMWARE_VARIANT
         esp_http_client_set_header(http_client, "x-firmware-variant", FIRMWARE_VARIANT);
-        ESP_LOGI(TAG, "variant: %s", FIRMWARE_VARIANT);
 #endif
 
         if (esp_http_client_perform(http_client) != ESP_OK) {
