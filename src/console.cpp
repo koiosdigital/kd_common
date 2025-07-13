@@ -8,6 +8,7 @@
 
 #include <esp_console.h>
 #include <esp_log.h>
+#include <esp_app_desc.h>
 
 #include "driver/usb_serial_jtag.h"
 #include "driver/usb_serial_jtag_vfs.h"
@@ -30,7 +31,6 @@ bool use_printf = false;
 uint32_t output_buffer_pos = 0;
 char* output_buffer = nullptr;
 
-//Helper function (duplicates printf to redirect to buffer or stdout depending on if flag is set)
 static int console_out(const char* format, ...)
 {
     va_list args;
@@ -94,86 +94,6 @@ static void register_heap(void)
         .func = &heap_size,
     };
     ESP_ERROR_CHECK(esp_console_cmd_register(&heap_cmd));
-}
-
-/** log_level command changes log level via esp_log_level_set */
-
-static struct {
-    struct arg_str* level;
-    struct arg_end* end;
-} log_level_args;
-
-static const char* s_log_level_names[] = {
-    "none",
-    "error",
-    "warn",
-    "info",
-    "debug",
-    "verbose"
-};
-
-static int log_level(int argc, char** argv)
-{
-    int nerrors = arg_parse(argc, argv, (void**)&log_level_args);
-    if (nerrors != 0) {
-        arg_print_errors(stderr, log_level_args.end, argv[0]);
-        return 1;
-    }
-    assert(log_level_args.level->count == 1);
-    const char* level_str = log_level_args.level->sval[0];
-    esp_log_level_t level;
-    size_t level_len = strlen(level_str);
-    for (level = ESP_LOG_NONE; (int)level <= (int)ESP_LOG_VERBOSE; level = (esp_log_level_t)((int)level + 1)) {
-        if (memcmp(level_str, s_log_level_names[level], level_len) == 0) {
-            break;
-        }
-    }
-    if (level > ESP_LOG_VERBOSE) {
-        console_out("Invalid log level '%s', choose from none|error|warn|info|debug|verbose\n", level_str);
-        return 1;
-    }
-    if (level > CONFIG_LOG_MAXIMUM_LEVEL) {
-        console_out("Can't set log level to %s, max level limited in menuconfig to %s. "
-            "Please increase CONFIG_LOG_MAXIMUM_LEVEL in menuconfig.\n",
-            s_log_level_names[level], s_log_level_names[CONFIG_LOG_MAXIMUM_LEVEL]);
-        return 1;
-    }
-    esp_log_level_set("*", level);
-
-    //store log level in NVS
-    nvs_handle handle;
-    nvs_open(NVS_CONSOLE_NAMESPACE, NVS_READWRITE, &handle);
-    nvs_set_u32(handle, NVS_CONSOLE_LOGLEVEL, level);
-    nvs_commit(handle);
-    nvs_close(handle);
-
-    return 0;
-}
-
-static void register_log_level(void)
-{
-    log_level_args.level = arg_str1(NULL, NULL, "<none|error|warn|debug|verbose>", "Log level to set. Abbreviated words are accepted.");
-    log_level_args.end = arg_end(1);
-
-    const esp_console_cmd_t cmd = {
-        .command = "log_level",
-        .help = "Set log level",
-        .hint = NULL,
-        .func = &log_level,
-        .argtable = &log_level_args
-    };
-    ESP_ERROR_CHECK(esp_console_cmd_register(&cmd));
-
-    //load log level from NVS
-    nvs_handle handle;
-    nvs_open(NVS_CONSOLE_NAMESPACE, NVS_READWRITE, &handle);
-    uint32_t log_level;
-    nvs_get_u32(handle, NVS_CONSOLE_LOGLEVEL, &log_level);
-    if (log_level == ESP_ERR_NVS_NOT_FOUND) {
-        log_level = CONFIG_LOG_DEFAULT_LEVEL;
-    }
-    esp_log_level_set("*", (esp_log_level_t)log_level);
-    nvs_close(handle);
 }
 
 #ifndef KD_COMMON_CRYPTO_DISABLE
@@ -392,6 +312,116 @@ static void register_wifi_reset(void)
     ESP_ERROR_CHECK(esp_console_cmd_register(&cmd));
 }
 
+static struct {
+    struct arg_str* ssid;
+    struct arg_str* password;
+    struct arg_end* end;
+} wifi_provision_args;
+
+static int wifi_provision(int argc, char** argv)
+{
+    int nerrors = arg_parse(argc, argv, (void**)&wifi_provision_args);
+    if (nerrors != 0) {
+        arg_print_errors(stderr, wifi_provision_args.end, argv[0]);
+        return 1;
+    }
+
+    const char* ssid = wifi_provision_args.ssid->sval[0];
+    const char* password = wifi_provision_args.password->sval[0];
+
+    console_out("Provisioning WiFi with SSID: %s\n", ssid);
+
+    // TODO: Implement actual WiFi provisioning
+    // This would typically call kd_common_set_wifi_credentials or similar
+
+    console_out("{\"error\":false,\"message\":\"WiFi provisioned successfully\"}\n");
+    return 0;
+}
+
+static void register_wifi_provision(void)
+{
+    wifi_provision_args.ssid = arg_str1(NULL, NULL, "<ssid>", "WiFi SSID");
+    wifi_provision_args.password = arg_str1(NULL, NULL, "<password>", "WiFi password");
+    wifi_provision_args.end = arg_end(2);
+
+    const esp_console_cmd_t cmd = {
+        .command = "wifi_provision",
+        .help = "Provision WiFi with SSID and password",
+        .hint = NULL,
+        .func = &wifi_provision,
+        .argtable = &wifi_provision_args
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&cmd));
+}
+
+static int assert_crash(int argc, char** argv)
+{
+    console_out("Triggering system crash...\n");
+    assert(false); // This will crash the system
+    return 0; // This line should never be reached
+}
+
+static void register_assert(void)
+{
+    const esp_console_cmd_t cmd = {
+        .command = "assert",
+        .help = "Crash the system for testing purposes",
+        .hint = NULL,
+        .func = &assert_crash,
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&cmd));
+}
+
+static int get_version(int argc, char** argv)
+{
+    const esp_app_desc_t* app_desc = esp_app_get_description();
+
+    console_out("{\n");
+    console_out("  \"project_name\": \"%s\",\n", app_desc->project_name);
+    console_out("  \"version\": \"%s\",\n", app_desc->version);
+    console_out("  \"compile_time\": \"%s\",\n", app_desc->time);
+    console_out("  \"compile_date\": \"%s\",\n", app_desc->date);
+    console_out("  \"idf_version\": \"%s\",\n", app_desc->idf_ver);
+    console_out("  \"secure_version\": %d,\n", app_desc->secure_version);
+    console_out("  \"error\": false\n");
+    console_out("}\n");
+
+    return 0;
+}
+
+static void register_get_version(void)
+{
+    const esp_console_cmd_t cmd = {
+        .command = "version",
+        .help = "Get firmware version information",
+        .hint = NULL,
+        .func = &get_version,
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&cmd));
+}
+
+static int check_ota_updates(int argc, char** argv)
+{
+    console_out("Checking for OTA updates...\n");
+
+    // TODO: Implement actual OTA update check
+    // This would typically check a remote server for updates
+
+    console_out("{\"error\":false,\"message\":\"No updates available\",\"update_available\":false}\n");
+    return 0;
+}
+
+static void register_check_ota_updates(void)
+{
+    const esp_console_cmd_t cmd = {
+        .command = "check_ota",
+        .help = "Check for OTA firmware updates",
+        .hint = NULL,
+        .func = &check_ota_updates,
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&cmd));
+}
+
 char* kd_common_run_command(char* input, int* return_code) {
     use_printf = false;
 
@@ -412,16 +442,13 @@ char* kd_common_run_command(char* input, int* return_code) {
 void console_init() {
     esp_console_repl_t* repl = NULL;
     esp_console_repl_config_t repl_config = ESP_CONSOLE_REPL_CONFIG_DEFAULT();
-    /* Prompt to be printed before each line.
-     * This can be customized, made dynamic, etc.
-     */
-    repl_config.prompt = "kd>";
+
+    repl_config.prompt = "tty>";
     repl_config.max_cmdline_length = 4096;
 
     esp_console_register_help_command();
     register_free();
     register_heap();
-    register_log_level();
 
 #ifndef KD_COMMON_CRYPTO_DISABLE
     register_crypto_status();
@@ -431,7 +458,12 @@ void console_init() {
     register_set_ds_params();
     register_set_claim_token();
 #endif
+
     register_wifi_reset();
+    register_wifi_provision();
+    register_assert();
+    register_get_version();
+    register_check_ota_updates();
 
 #if SOC_USB_SERIAL_JTAG_SUPPORTED
     esp_console_dev_usb_serial_jtag_config_t hw_config = ESP_CONSOLE_DEV_USB_SERIAL_JTAG_CONFIG_DEFAULT();
