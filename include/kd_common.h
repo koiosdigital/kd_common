@@ -62,3 +62,7 @@ void kd_common_wifi_disconnect();
 void kd_common_clear_wifi_credentials();
 bool kd_common_is_wifi_connected();
 void kd_common_set_provisioning_pop_token_format(ProvisioningPOPTokenFormat_t format);
+
+// WiFi hostname functions (separate from device name)
+void kd_common_set_wifi_hostname(const char* hostname);
+char* kd_common_get_wifi_hostname();
