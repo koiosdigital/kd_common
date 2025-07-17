@@ -51,6 +51,14 @@ void wifi_init() {
     esp_wifi_start();
 }
 
+void wifi_restart() {
+    ESP_LOGI(TAG, "restarting WiFi");
+
+    esp_wifi_stop();
+    esp_wifi_deinit();
+    wifi_init();
+}
+
 void kd_common_set_wifi_hostname(const char* hostname) {
     if (hostname == NULL || strlen(hostname) == 0 || strlen(hostname) > MAX_HOSTNAME_LEN) {
         ESP_LOGE(TAG, "Invalid hostname length");
@@ -79,6 +87,7 @@ void kd_common_set_wifi_hostname(const char* hostname) {
     }
 
     nvs_close(handle);
+    wifi_restart();  // Restart WiFi to apply new hostname
 }
 
 char* kd_common_get_wifi_hostname() {
