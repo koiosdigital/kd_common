@@ -534,6 +534,33 @@ exit:
     return error;
 }
 
+esp_err_t kd_common_clear_device_cert() {
+    esp_err_t error;
+    nvs_handle handle;
+
+    error = nvs_open(NVS_CRYPTO_NAMESPACE, NVS_READWRITE, &handle);
+    if (error != ESP_OK) {
+        ESP_LOGE(TAG, "nvs open failed");
+        goto exit;
+    }
+
+    error = nvs_erase_key(handle, NVS_CRYPTO_DEVICE_CERT);
+    if (error != ESP_OK) {
+        ESP_LOGE(TAG, "nvs erase device cert failed");
+        goto exit;
+    }
+
+    error = nvs_commit(handle);
+    if (error != ESP_OK) {
+        ESP_LOGE(TAG, "nvs commit failed");
+        goto exit;
+    }
+
+exit:
+    nvs_close(handle);
+    return error;
+}
+
 esp_err_t crypto_set_claim_token(char* buffer, size_t len) {
     esp_err_t error;
     nvs_handle handle;

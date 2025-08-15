@@ -262,6 +262,29 @@ static void register_set_device_cert(void)
     ESP_ERROR_CHECK(esp_console_cmd_register(&cmd));
 }
 
+static int clear_device_cert(int argc, char** argv)
+{
+    esp_err_t error = kd_common_clear_device_cert();
+    if (error != ESP_OK) {
+        ESP_LOGE(TAG, "failed to clear device cert");
+        console_out("{\"error\":true}\n");
+        return 1;
+    }
+    console_out("{\"error\":false}\n");
+    return 0;
+}
+
+static void register_clear_device_cert(void)
+{
+    const esp_console_cmd_t cmd = {
+        .command = "clear_device_cert",
+        .help = "Clear device certificate",
+        .hint = NULL,
+        .func = &clear_device_cert,
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&cmd));
+}
+
 static struct {
     struct arg_str* claim_token;
     struct arg_end* end;
@@ -454,6 +477,7 @@ void console_init() {
     register_crypto_status();
     register_get_csr();
     register_set_device_cert();
+    register_clear_device_cert();
     register_get_ds_params();
     register_set_ds_params();
     register_set_claim_token();
