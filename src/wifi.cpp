@@ -47,8 +47,11 @@ void wifi_init() {
 
     esp_wifi_init(&cfg);
     esp_wifi_set_mode(wifi_mode_t::WIFI_MODE_STA);
+    esp_wifi_set_ps(WIFI_PS_NONE);
     esp_netif_set_hostname(netif, kd_common_get_wifi_hostname());
     esp_wifi_start();
+
+    vTaskDelay(pdMS_TO_TICKS(1000)); // Allow time for WiFi to start
 }
 
 void wifi_restart() {
