@@ -19,6 +19,7 @@
 static const char* TAG = "kd_ble_prov";
 
 TaskHandle_t xProvisioningTask = nullptr;
+bool ever_connected = false;
 ProvisioningPOPTokenFormat_t provisioning_pop_token_format = ProvisioningPOPTokenFormat_t::NONE;
 
 //MARK: Public API
@@ -148,7 +149,7 @@ void provisioning_event_handler(void* arg, esp_event_base_t event_base, int32_t 
             wifiConnectionAttempts++;
             is_internet = false;
 
-            if (wifiConnectionAttempts > 5) {
+            if (wifiConnectionAttempts > 5 && !ever_connected) {
                 kd_common_notify_provisioning_task(ProvisioningTaskNotification_t::START_PROVISIONING);
             }
 
@@ -160,6 +161,7 @@ void provisioning_event_handler(void* arg, esp_event_base_t event_base, int32_t 
     else if (event_base == IP_EVENT) {
         if (event_id == IP_EVENT_STA_GOT_IP) {
             wifiConnectionAttempts = 0;
+            ever_connected = true;
             is_internet = true;
             kd_common_notify_provisioning_task(ProvisioningTaskNotification_t::STOP_PROVISIONING);
         }
