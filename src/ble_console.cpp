@@ -1,5 +1,7 @@
 #include "ble_console.h"
 
+#ifndef KD_COMMON_CONSOLE_DISABLE
+
 #include <string.h>
 #include <stdlib.h>
 
@@ -94,3 +96,5 @@ esp_err_t ble_console_endpoint(uint32_t session_id, const uint8_t* inbuf, ssize_
 
     return ESP_OK;
 }
+
+#endif // KD_COMMON_CONSOLE_DISABLE

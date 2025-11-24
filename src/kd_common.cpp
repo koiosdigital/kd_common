@@ -21,7 +21,10 @@ void kd_common_init() {
         ret = nvs_flash_init();
     }
 
+#ifndef KD_COMMON_CONSOLE_DISABLE
     console_init();
+#endif
+
 #ifndef KD_COMMON_CRYPTO_DISABLE
     crypto_init();
 #endif

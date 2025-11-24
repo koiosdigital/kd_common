@@ -111,7 +111,10 @@ void provisioning_task(void* pvParameter) {
                     wifi_prov_mgr_start_provisioning(WIFI_PROV_SECURITY_1, kd_common_provisioning_get_pop_token(), kd_common_get_device_name(), NULL);
                 }
 
+#ifndef KD_COMMON_CONSOLE_DISABLE
                 wifi_prov_mgr_endpoint_register(BLE_CONSOLE_ENDPOINT_NAME, ble_console_endpoint, NULL);
+#endif // KD_COMMON_CONSOLE_DISABLE
+
                 provisioning_started = true;
                 ESP_LOGI(TAG, "started");
                 break;

@@ -1,5 +1,7 @@
 #include "console.h"
 
+#ifndef KD_COMMON_CONSOLE_DISABLE
+
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <unistd.h>
@@ -497,3 +499,5 @@ void console_init() {
     use_printf = true;
     ESP_ERROR_CHECK(esp_console_start_repl(repl));
 }
+
+#endif // KD_COMMON_CONSOLE_DISABLE
