@@ -11,6 +11,9 @@ char* kd_common_get_device_name() {
     }
 
     device_name = (char*)calloc(64, sizeof(char));
+    if (device_name == nullptr) {
+        return nullptr;
+    }
 
     uint8_t mac[6];
     esp_efuse_mac_get_default(mac);

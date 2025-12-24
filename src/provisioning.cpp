@@ -24,10 +24,10 @@ ProvisioningPOPTokenFormat_t provisioning_pop_token_format = ProvisioningPOPToke
 
 //MARK: Public API
 void kd_common_notify_provisioning_task(ProvisioningTaskNotification_t notification) {
-    TaskHandle_t xProvisioningTask = provisioning_get_task_handle();
+    TaskHandle_t provisioning_task_handle = provisioning_get_task_handle();
 
-    if (xProvisioningTask != NULL) {
-        xTaskNotify(xProvisioningTask, notification, eSetValueWithOverwrite);
+    if (provisioning_task_handle != NULL) {
+        xTaskNotify(provisioning_task_handle, notification, eSetValueWithOverwrite);
     }
 }
 

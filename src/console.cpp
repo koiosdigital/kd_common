@@ -33,6 +33,8 @@ bool use_printf = false;
 uint32_t output_buffer_pos = 0;
 char* output_buffer = nullptr;
 
+static constexpr size_t CONSOLE_OUTPUT_BUFFER_SIZE = 4096;
+
 static int console_out(const char* format, ...)
 {
     va_list args;
@@ -46,12 +48,19 @@ static int console_out(const char* format, ...)
             ESP_LOGE(TAG, "cannot override command output buffer if null");
         }
         else {
-            int written = vsnprintf(output_buffer + output_buffer_pos, 4096 - output_buffer_pos, format, args);
-            if (written > 0) {
-                output_buffer_pos += written;
-                if (output_buffer_pos >= 4096) {
-                    ESP_LOGW(TAG, "output buffer overflow, truncating output");
-                    output_buffer_pos = 4095; // Ensure null-termination
+            if (output_buffer_pos >= (CONSOLE_OUTPUT_BUFFER_SIZE - 1)) {
+                ESP_LOGW(TAG, "output buffer overflow, truncating output");
+            }
+            else {
+                const size_t available = CONSOLE_OUTPUT_BUFFER_SIZE - output_buffer_pos;
+                int written = vsnprintf(output_buffer + output_buffer_pos, available, format, args);
+                if (written > 0) {
+                    // vsnprintf returns the number of chars that would have been written (excluding NUL).
+                    output_buffer_pos += (uint32_t)written;
+                    if (output_buffer_pos >= CONSOLE_OUTPUT_BUFFER_SIZE) {
+                        output_buffer_pos = (uint32_t)(CONSOLE_OUTPUT_BUFFER_SIZE - 1);
+                        output_buffer[output_buffer_pos] = '\0';
+                    }
                 }
             }
         }
@@ -450,18 +459,25 @@ static void register_check_ota_updates(void)
 char* kd_common_run_command(char* input, int* return_code) {
     use_printf = false;
 
-    output_buffer = (char*)calloc(4096, sizeof(char));
+    output_buffer = (char*)calloc(CONSOLE_OUTPUT_BUFFER_SIZE, sizeof(char));
     if (output_buffer == NULL) {
         ESP_LOGE(TAG, "failed to allocate output buffer");
         return NULL;
     }
 
-    esp_console_run(input, return_code);
-
     output_buffer_pos = 0;
 
+    int local_return_code = 0;
+    int* effective_return_code = (return_code != nullptr) ? return_code : &local_return_code;
+
+    esp_console_run(input, effective_return_code);
+
     use_printf = true;
-    return output_buffer;
+
+    // Return the captured output and clear the global pointer to avoid accidental reuse.
+    char* result = output_buffer;
+    output_buffer = nullptr;
+    return result;
 }
 
 void console_init() {

@@ -29,21 +29,40 @@
 static const char* TAG = "kd_crypto";
 SemaphoreHandle_t keygen_mutex = NULL;
 
+static constexpr size_t KD_CRYPTO_PEM_BUFFER_SIZE = 4096;
+
+static inline esp_err_t kd_crypto_nvs_open(nvs_open_mode_t mode, nvs_handle_t* out_handle) {
+    esp_err_t err = nvs_open(NVS_CRYPTO_NAMESPACE, mode, out_handle);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "nvs open failed: %s", esp_err_to_name(err));
+    }
+    return err;
+}
+
+static inline void kd_crypto_nvs_close_if_open(bool is_open, nvs_handle_t handle) {
+    if (is_open) {
+        nvs_close(handle);
+    }
+}
+
 //MARK: Public API
 esp_err_t kd_common_get_device_cert(char* buffer, size_t* len) {
-    esp_err_t error;
+    esp_err_t error = ESP_FAIL;
     nvs_handle handle;
 
-    nvs_open(NVS_CRYPTO_NAMESPACE, NVS_READWRITE, &handle);
+    error = nvs_open(NVS_CRYPTO_NAMESPACE, NVS_READWRITE, &handle);
+    if (error != ESP_OK) {
+        ESP_LOGE(TAG, "nvs open failed: %s", esp_err_to_name(error));
+        return error;
+    }
 
     if (buffer == NULL) {
         error = nvs_find_key(handle, NVS_CRYPTO_DEVICE_CERT, NULL);
-        goto exit;
+        nvs_close(handle);
+        return error;
     }
 
     error = nvs_get_blob(handle, NVS_CRYPTO_DEVICE_CERT, buffer, len);
-
-exit:
     nvs_close(handle);
     return error;
 }
@@ -83,17 +102,34 @@ CryptoState_t kd_common_crypto_get_state() {
 
 
 esp_ds_data_ctx_t* kd_common_crypto_get_ctx() {
-    esp_ds_data_ctx_t* ds_data_ctx;
+    esp_ds_data_ctx_t* ds_data_ctx = nullptr;
     nvs_handle handle;
+    bool handle_open = false;
+    esp_err_t err = ESP_OK;
     uint32_t len = 0;
 
-    ds_data_ctx = (esp_ds_data_ctx_t*)calloc(1, sizeof(esp_ds_data_ctx_t));
-    ds_data_ctx->esp_ds_data = (esp_ds_data_t*)calloc(1, sizeof(esp_ds_data_t));
+    ds_data_ctx = (esp_ds_data_ctx_t*)heap_caps_calloc(1, sizeof(esp_ds_data_ctx_t), MALLOC_CAP_SPIRAM);
+    if (ds_data_ctx == nullptr) {
+        ESP_LOGE(TAG, "no mem for ds context");
+        return NULL;
+    }
 
-    nvs_open(NVS_CRYPTO_NAMESPACE, NVS_READONLY, &handle);
+    ds_data_ctx->esp_ds_data = (esp_ds_data_t*)heap_caps_calloc(1, sizeof(esp_ds_data_t), MALLOC_CAP_SPIRAM);
+    if (ds_data_ctx->esp_ds_data == nullptr) {
+        ESP_LOGE(TAG, "no mem for ds data");
+        free(ds_data_ctx);
+        return NULL;
+    }
+
+    esp_err_t open_err = nvs_open(NVS_CRYPTO_NAMESPACE, NVS_READONLY, &handle);
+    if (open_err != ESP_OK) {
+        ESP_LOGE(TAG, "nvs open failed: %s", esp_err_to_name(open_err));
+        goto error;
+    }
+    handle_open = true;
 
     len = ESP_DS_C_LEN;
-    esp_err_t err = nvs_get_blob(handle, NVS_CRYPTO_CIPHERTEXT, (char*)ds_data_ctx->esp_ds_data->c, (size_t*)&len);
+    err = nvs_get_blob(handle, NVS_CRYPTO_CIPHERTEXT, (char*)ds_data_ctx->esp_ds_data->c, (size_t*)&len);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "failed to get ciphertext");
         goto error;
@@ -128,19 +164,22 @@ error:
         free(ds_data_ctx->esp_ds_data);
         free(ds_data_ctx);
     }
-    nvs_close(handle);
+    if (handle_open) {
+        nvs_close(handle);
+    }
     return NULL;
 }
 
 esp_err_t kd_common_get_claim_token(char* buffer, size_t* len) {
     esp_err_t error;
-    nvs_handle handle;
+    nvs_handle_t handle = 0;
+    bool handle_open = false;
 
-    error = nvs_open(NVS_CRYPTO_NAMESPACE, NVS_READWRITE, &handle);
+    error = kd_crypto_nvs_open(NVS_READWRITE, &handle);
     if (error != ESP_OK) {
-        ESP_LOGE(TAG, "nvs open failed");
         goto exit;
     }
+    handle_open = true;
 
     if (buffer == NULL) {
         error = nvs_find_key(handle, NVS_CRYPTO_CLAIM_TOKEN, NULL);
@@ -154,21 +193,27 @@ esp_err_t kd_common_get_claim_token(char* buffer, size_t* len) {
     }
 
 exit:
-    nvs_close(handle);
+    kd_crypto_nvs_close_if_open(handle_open, handle);
     return error;
 }
 
 esp_err_t kd_common_clear_claim_token() {
     esp_err_t error;
-    nvs_handle handle;
+    nvs_handle_t handle = 0;
+    bool handle_open = false;
 
-    error = nvs_open(NVS_CRYPTO_NAMESPACE, NVS_READWRITE, &handle);
+    error = kd_crypto_nvs_open(NVS_READWRITE, &handle);
     if (error != ESP_OK) {
-        ESP_LOGE(TAG, "nvs open failed");
         goto exit;
     }
+    handle_open = true;
 
     error = nvs_erase_key(handle, NVS_CRYPTO_CLAIM_TOKEN);
+    if (error == ESP_ERR_NVS_NOT_FOUND) {
+        // Already cleared.
+        error = ESP_OK;
+        goto exit;
+    }
     if (error != ESP_OK) {
         ESP_LOGE(TAG, "nvs erase claim token failed");
         goto exit;
@@ -181,7 +226,7 @@ esp_err_t kd_common_clear_claim_token() {
     }
 
 exit:
-    nvs_close(handle);
+    kd_crypto_nvs_close_if_open(handle_open, handle);
     return error;
 }
 
@@ -266,6 +311,8 @@ esp_err_t store_csr(mbedtls_rsa_context* rsa) {
     mbedtls_entropy_context entropy;
     mbedtls_ctr_drbg_context ctr_drbg;
     mbedtls_pk_context pk = { 0 };
+    nvs_handle_t handle = 0;
+    bool handle_open = false;
     char cn[128];
     unsigned char* csr_buffer = NULL;
 
@@ -294,19 +341,25 @@ esp_err_t store_csr(mbedtls_rsa_context* rsa) {
 
     mbedtls_x509write_csr_set_key(&req, &pk);
 
-    csr_buffer = (unsigned char*)calloc(4096, sizeof(unsigned char));
-    error = mbedtls_x509write_csr_pem(&req, csr_buffer, 4096, mbedtls_ctr_drbg_random, &ctr_drbg);
+    csr_buffer = (unsigned char*)calloc(KD_CRYPTO_PEM_BUFFER_SIZE, sizeof(unsigned char));
+    if (csr_buffer == NULL) {
+        ESP_LOGE(TAG, "no mem for csr buffer");
+        error = ESP_ERR_NO_MEM;
+        goto exit;
+    }
+
+    error = mbedtls_x509write_csr_pem(&req, csr_buffer, KD_CRYPTO_PEM_BUFFER_SIZE, mbedtls_ctr_drbg_random, &ctr_drbg);
     if (error != ESP_OK) {
         ESP_LOGE(TAG, "csr_pem failed");
         goto exit;
     }
 
-    nvs_handle handle;
-    error = nvs_open(NVS_CRYPTO_NAMESPACE, NVS_READWRITE, &handle);
+    error = kd_crypto_nvs_open(NVS_READWRITE, &handle);
     if (error != ESP_OK) {
-        ESP_LOGE(TAG, "nvs open failed");
         goto exit;
     }
+    handle_open = true;
+
     error = nvs_set_blob(handle, NVS_CRYPTO_CSR, csr_buffer, strlen((char*)csr_buffer));
     if (error != ESP_OK) {
         ESP_LOGE(TAG, "nvs set CSR failed");
@@ -322,7 +375,7 @@ esp_err_t store_csr(mbedtls_rsa_context* rsa) {
     ESP_LOGI(TAG, "CSR stored");
 
 exit:
-    nvs_close(handle);
+    kd_crypto_nvs_close_if_open(handle_open, handle);
     mbedtls_x509write_csr_free(&req);
     mbedtls_ctr_drbg_free(&ctr_drbg);
     mbedtls_entropy_free(&entropy);
@@ -334,12 +387,13 @@ exit:
 esp_err_t store_ds_params(uint8_t* c, uint8_t* iv, uint8_t key_id, uint16_t rsa_length) {
     esp_err_t error = ESP_OK;
 
-    nvs_handle handle;
-    error = nvs_open(NVS_CRYPTO_NAMESPACE, NVS_READWRITE, &handle);
+    nvs_handle_t handle = 0;
+    bool handle_open = false;
+    error = kd_crypto_nvs_open(NVS_READWRITE, &handle);
     if (error != ESP_OK) {
-        ESP_LOGE(TAG, "nvs open failed");
         goto exit;
     }
+    handle_open = true;
 
     error = nvs_set_blob(handle, NVS_CRYPTO_CIPHERTEXT, c, ESP_DS_C_LEN);
     if (error != ESP_OK) {
@@ -374,7 +428,7 @@ esp_err_t store_ds_params(uint8_t* c, uint8_t* iv, uint8_t key_id, uint16_t rsa_
     ESP_LOGI(TAG, "ds params stored");
 
 exit:
-    nvs_close(handle);
+    kd_crypto_nvs_close_if_open(handle_open, handle);
     return error;
 }
 
@@ -456,13 +510,14 @@ exit:
 
 esp_err_t crypto_get_csr(char* buffer, size_t* len) {
     esp_err_t error;
-    nvs_handle handle;
+    nvs_handle_t handle = 0;
+    bool handle_open = false;
 
-    error = nvs_open(NVS_CRYPTO_NAMESPACE, NVS_READWRITE, &handle);
+    error = kd_crypto_nvs_open(NVS_READWRITE, &handle);
     if (error != ESP_OK) {
-        ESP_LOGE(TAG, "nvs open failed");
         goto exit;
     }
+    handle_open = true;
 
     if (buffer == NULL) {
         error = nvs_find_key(handle, NVS_CRYPTO_CSR, NULL);
@@ -476,19 +531,20 @@ esp_err_t crypto_get_csr(char* buffer, size_t* len) {
     }
 
 exit:
-    nvs_close(handle);
+    kd_crypto_nvs_close_if_open(handle_open, handle);
     return error;
 }
 
 esp_err_t crypto_clear_csr() {
     esp_err_t error;
-    nvs_handle handle;
+    nvs_handle_t handle = 0;
+    bool handle_open = false;
 
-    error = nvs_open(NVS_CRYPTO_NAMESPACE, NVS_READWRITE, &handle);
+    error = kd_crypto_nvs_open(NVS_READWRITE, &handle);
     if (error != ESP_OK) {
-        ESP_LOGE(TAG, "nvs open failed");
         goto exit;
     }
+    handle_open = true;
 
     error = nvs_erase_key(handle, NVS_CRYPTO_CSR);
     if (error != ESP_OK) {
@@ -503,19 +559,20 @@ esp_err_t crypto_clear_csr() {
     }
 
 exit:
-    nvs_close(handle);
+    kd_crypto_nvs_close_if_open(handle_open, handle);
     return error;
 }
 
 esp_err_t crypto_set_device_cert(char* buffer, size_t len) {
     esp_err_t error;
-    nvs_handle handle;
+    nvs_handle_t handle = 0;
+    bool handle_open = false;
 
-    error = nvs_open(NVS_CRYPTO_NAMESPACE, NVS_READWRITE, &handle);
+    error = kd_crypto_nvs_open(NVS_READWRITE, &handle);
     if (error != ESP_OK) {
-        ESP_LOGE(TAG, "nvs open failed");
         goto exit;
     }
+    handle_open = true;
 
     error = nvs_set_blob(handle, NVS_CRYPTO_DEVICE_CERT, buffer, len);
     if (error != ESP_OK) {
@@ -530,19 +587,20 @@ esp_err_t crypto_set_device_cert(char* buffer, size_t len) {
     }
 
 exit:
-    nvs_close(handle);
+    kd_crypto_nvs_close_if_open(handle_open, handle);
     return error;
 }
 
 esp_err_t kd_common_clear_device_cert() {
     esp_err_t error;
-    nvs_handle handle;
+    nvs_handle_t handle = 0;
+    bool handle_open = false;
 
-    error = nvs_open(NVS_CRYPTO_NAMESPACE, NVS_READWRITE, &handle);
+    error = kd_crypto_nvs_open(NVS_READWRITE, &handle);
     if (error != ESP_OK) {
-        ESP_LOGE(TAG, "nvs open failed");
         goto exit;
     }
+    handle_open = true;
 
     error = nvs_erase_key(handle, NVS_CRYPTO_DEVICE_CERT);
     if (error != ESP_OK) {
@@ -557,19 +615,20 @@ esp_err_t kd_common_clear_device_cert() {
     }
 
 exit:
-    nvs_close(handle);
+    kd_crypto_nvs_close_if_open(handle_open, handle);
     return error;
 }
 
 esp_err_t crypto_set_claim_token(char* buffer, size_t len) {
     esp_err_t error;
-    nvs_handle handle;
+    nvs_handle_t handle = 0;
+    bool handle_open = false;
 
-    error = nvs_open(NVS_CRYPTO_NAMESPACE, NVS_READWRITE, &handle);
+    error = kd_crypto_nvs_open(NVS_READWRITE, &handle);
     if (error != ESP_OK) {
-        ESP_LOGE(TAG, "nvs open failed");
         goto exit;
     }
+    handle_open = true;
 
     error = nvs_set_blob(handle, NVS_CRYPTO_CLAIM_TOKEN, buffer, len);
     if (error != ESP_OK) {
@@ -584,7 +643,7 @@ esp_err_t crypto_set_claim_token(char* buffer, size_t len) {
     }
 
 exit:
-    nvs_close(handle);
+    kd_crypto_nvs_close_if_open(handle_open, handle);
     return error;
 }
 

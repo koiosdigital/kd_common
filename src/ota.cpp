@@ -11,19 +11,67 @@
 #include "cJSON.h"
 #include "kd_common.h"
 
+#include <cstring>
+
 static const char* TAG = "kd_ota";
 
-char http_response_data[512] = { 0 };
-esp_err_t _http_event_handler(esp_http_client_event_t* evt) {
-    if (evt->event_id == HTTP_EVENT_ON_DATA) {
-        memcpy(http_response_data, evt->data, evt->data_len);
-        http_response_data[evt->data_len] = '\0';
-    }
-    return ESP_OK;
-}
+namespace {
+    struct HttpResponseBuffer {
+        char* data;
+        size_t capacity;
+        size_t len;
+    };
 
-void ota_task(void* pvParameter) {
+    static void http_response_buffer_reset(HttpResponseBuffer* buffer) {
+        if (buffer == nullptr || buffer->data == nullptr || buffer->capacity == 0) {
+            return;
+        }
+        buffer->len = 0;
+        buffer->data[0] = '\0';
+    }
+
+    static esp_err_t http_event_handler(esp_http_client_event_t* evt) {
+        if (evt == nullptr) {
+            return ESP_OK;
+        }
+
+        auto* buffer = static_cast<HttpResponseBuffer*>(evt->user_data);
+        if (buffer == nullptr || buffer->data == nullptr || buffer->capacity < 2) {
+            return ESP_OK;
+        }
+
+        switch (evt->event_id) {
+        case HTTP_EVENT_ON_DATA: {
+            if (evt->data == nullptr || evt->data_len <= 0) {
+                break;
+            }
+
+            const size_t available = buffer->capacity - buffer->len - 1; // keep room for NUL
+            const size_t to_copy = (available < (size_t)evt->data_len) ? available : (size_t)evt->data_len;
+            if (to_copy == 0) {
+                break;
+            }
+            memcpy(buffer->data + buffer->len, evt->data, to_copy);
+            buffer->len += to_copy;
+            buffer->data[buffer->len] = '\0';
+            break;
+        }
+        case HTTP_EVENT_ON_CONNECTED:
+            http_response_buffer_reset(buffer);
+            break;
+        default:
+            break;
+        }
+
+        return ESP_OK;
+    }
+} // namespace
+
+static void ota_update_task(void* pvParameter) {
     bool has_done_boot_check = false;
+
+    char http_response_data[512] = { 0 };
+    HttpResponseBuffer response_buffer{ http_response_data, sizeof(http_response_data), 0 };
 
     while (true) {
         if (kd_common_is_wifi_connected() == false) {
@@ -38,13 +86,19 @@ void ota_task(void* pvParameter) {
 
         ESP_LOGI(TAG, "checking for updates");
 
-        esp_http_client_config_t config = {
-            .url = FIRMWARE_ENDPOINT_URL,
-            .event_handler = _http_event_handler,
-            .crt_bundle_attach = esp_crt_bundle_attach,
-        };
+        http_response_buffer_reset(&response_buffer);
+
+        esp_http_client_config_t config = {};
+        config.url = FIRMWARE_ENDPOINT_URL;
+        config.event_handler = http_event_handler;
+        config.crt_bundle_attach = esp_crt_bundle_attach;
+        config.user_data = &response_buffer;
 
         esp_http_client_handle_t http_client = esp_http_client_init(&config);
+        if (http_client == nullptr) {
+            ESP_LOGE(TAG, "failed to init http client");
+            continue;
+        }
 
         //esp_app_desc
         const esp_app_desc_t* app_desc = esp_app_get_description();
@@ -56,8 +110,10 @@ void ota_task(void* pvParameter) {
         esp_http_client_set_header(http_client, "x-firmware-variant", FIRMWARE_VARIANT);
 #endif
 
-        if (esp_http_client_perform(http_client) != ESP_OK) {
-            ESP_LOGE(TAG, "http request failed");
+        esp_err_t perform_err = esp_http_client_perform(http_client);
+        if (perform_err != ESP_OK) {
+            ESP_LOGE(TAG, "http request failed: %s", esp_err_to_name(perform_err));
+            esp_http_client_cleanup(http_client);
             continue;
         }
 
@@ -76,7 +132,7 @@ void ota_task(void* pvParameter) {
             continue;
         }
 
-        memset(http_response_data, 0, sizeof(http_response_data));
+        http_response_buffer_reset(&response_buffer);
 
         if (!cJSON_HasObjectItem(root, "update_available")) {
             ESP_LOGE(TAG, "failed to get update_available");
@@ -99,7 +155,18 @@ void ota_task(void* pvParameter) {
         }
 
         const char* ota_url_tmp = cJSON_GetObjectItem(root, "ota_url")->valuestring;
+        if (ota_url_tmp == nullptr || ota_url_tmp[0] == '\0') {
+            ESP_LOGE(TAG, "ota_url missing or empty");
+            cJSON_Delete(root);
+            continue;
+        }
+
         char* ota_url = strdup(ota_url_tmp);
+        if (ota_url == nullptr) {
+            ESP_LOGE(TAG, "failed to allocate ota_url");
+            cJSON_Delete(root);
+            continue;
+        }
 
         cJSON_Delete(root);
 
@@ -129,5 +196,5 @@ void ota_task(void* pvParameter) {
 }
 
 void ota_init() {
-    xTaskCreate(ota_task, "ota_task", 8192, NULL, 5, NULL);
+    xTaskCreate(ota_update_task, "ota_task", 8192, NULL, 5, NULL);
 }
