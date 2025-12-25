@@ -739,6 +739,12 @@ esp_err_t crypto_store_ds_params_json(char* params) {
     return ESP_OK;
 }
 
+bool crypto_will_generate_key() {
+    bool has_fuses = esp_efuse_get_key_purpose(DS_KEY_BLOCK) ==
+        ESP_EFUSE_KEY_PURPOSE_HMAC_DOWN_DIGITAL_SIGNATURE;
+    return !has_fuses;
+}
+
 esp_err_t crypto_init(void) {
     ensure_key_exists();
     return ESP_OK;

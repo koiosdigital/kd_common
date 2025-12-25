@@ -44,3 +44,15 @@ void kd_common_reverse_bytes(uint8_t* data, size_t len) {
         data[len - i - 1] = temp;
     }
 }
+
+#ifdef ENABLE_OTA
+bool kd_common_ota_has_completed_boot_check() {
+    return ota_has_completed_boot_check();
+}
+#endif
+
+#ifndef KD_COMMON_CRYPTO_DISABLE
+bool kd_common_crypto_will_generate_key() {
+    return crypto_will_generate_key();
+}
+#endif

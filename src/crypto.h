@@ -26,4 +26,5 @@ esp_err_t kd_common_clear_device_cert();
 esp_err_t crypto_set_claim_token(char* buffer, size_t len);
 char* crypto_get_ds_params_json();
 esp_err_t crypto_store_ds_params_json(char* params);
+bool crypto_will_generate_key();
 #endif

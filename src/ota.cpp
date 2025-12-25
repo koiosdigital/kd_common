@@ -67,6 +67,8 @@ namespace {
     }
 } // namespace
 
+static bool boot_check_completed = false;
+
 static void ota_update_task(void* pvParameter) {
     bool has_done_boot_check = false;
 
@@ -141,6 +143,7 @@ static void ota_update_task(void* pvParameter) {
         }
 
         has_done_boot_check = true;
+        boot_check_completed = true;
 
         if (cJSON_IsFalse(cJSON_GetObjectItem(root, "update_available"))) {
             ESP_LOGI(TAG, "no update available");
@@ -197,4 +200,8 @@ static void ota_update_task(void* pvParameter) {
 
 void ota_init() {
     xTaskCreate(ota_update_task, "ota_task", 8192, NULL, 5, NULL);
+}
+
+bool ota_has_completed_boot_check() {
+    return boot_check_completed;
 }
