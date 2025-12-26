@@ -131,27 +131,27 @@ esp_ds_data_ctx_t* kd_common_crypto_get_ctx() {
     len = ESP_DS_C_LEN;
     err = nvs_get_blob(handle, NVS_CRYPTO_CIPHERTEXT, (char*)ds_data_ctx->esp_ds_data->c, (size_t*)&len);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "failed to get ciphertext");
+        ESP_LOGD(TAG, "failed to get ciphertext: %s", esp_err_to_name(err));
         goto error;
     }
 
     len = ESP_DS_IV_LEN;
     err = nvs_get_blob(handle, NVS_CRYPTO_IV, (char*)ds_data_ctx->esp_ds_data->iv, (size_t*)&len);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "failed to get iv");
+        ESP_LOGD(TAG, "failed to get iv: %s", esp_err_to_name(err));
         goto error;
     }
 
     err = nvs_get_u8(handle, NVS_CRYPTO_DS_KEY_ID, &ds_data_ctx->efuse_key_id);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "failed to get ds key id");
+        ESP_LOGD(TAG, "failed to get ds key id: %s", esp_err_to_name(err));
         goto error;
     }
     ds_data_ctx->efuse_key_id -= 4;
 
     err = nvs_get_u16(handle, NVS_CRYPTO_RSA_LEN, (uint16_t*)(void*)&ds_data_ctx->esp_ds_data->rsa_length);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "failed to get rsa length");
+        ESP_LOGD(TAG, "failed to get rsa length: %s", esp_err_to_name(err));
         goto error;
     }
     ds_data_ctx->rsa_length_bits = (ds_data_ctx->esp_ds_data->rsa_length + 1) * 32;

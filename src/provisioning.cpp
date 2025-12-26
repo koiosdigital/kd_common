@@ -87,6 +87,7 @@ void provisioning_task(void* pvParameter) {
     while (true) {
         if (xTaskNotifyWait(0, ULONG_MAX, (uint32_t*)&notification, portMAX_DELAY) == pdTRUE) {
             char* pop = nullptr;
+            esp_err_t ret;
             switch (notification) {
             case STOP_PROVISIONING:
                 if (provisioning_started) {
@@ -100,19 +101,49 @@ void provisioning_task(void* pvParameter) {
                 if (provisioning_started) {
                     break;
                 }
-                wifi_prov_mgr_init({ .scheme = wifi_prov_scheme_ble, .scheme_event_handler = WIFI_PROV_SCHEME_BLE_EVENT_HANDLER_FREE_BTDM });
-                wifi_prov_mgr_endpoint_create(BLE_CONSOLE_ENDPOINT_NAME);
+                ret = wifi_prov_mgr_init({ .scheme = wifi_prov_scheme_ble, .scheme_event_handler = WIFI_PROV_SCHEME_BLE_EVENT_HANDLER_FREE_BTDM });
+                if (ret != ESP_OK) {
+                    ESP_LOGE(TAG, "Failed to init provisioning manager: %s", esp_err_to_name(ret));
+                    // Cancel WiFi connection, restart WiFi, and retry provisioning
+                    esp_wifi_disconnect();
+                    esp_wifi_stop();
+                    vTaskDelay(pdMS_TO_TICKS(1000));
+                    esp_wifi_start();
+                    vTaskDelay(pdMS_TO_TICKS(1000));
+                    // Retry provisioning init
+                    ret = wifi_prov_mgr_init({ .scheme = wifi_prov_scheme_ble, .scheme_event_handler = WIFI_PROV_SCHEME_BLE_EVENT_HANDLER_FREE_BTDM });
+                    if (ret != ESP_OK) {
+                        ESP_LOGE(TAG, "Failed to init provisioning manager on retry: %s", esp_err_to_name(ret));
+                        break;
+                    }
+                }
+
+                ret = wifi_prov_mgr_endpoint_create(BLE_CONSOLE_ENDPOINT_NAME);
+                if (ret != ESP_OK) {
+                    ESP_LOGE(TAG, "Failed to create provisioning endpoint: %s", esp_err_to_name(ret));
+                    wifi_prov_mgr_deinit();
+                    break;
+                }
 
                 pop = kd_common_provisioning_get_pop_token();
                 if (pop == nullptr) {
-                    wifi_prov_mgr_start_provisioning(WIFI_PROV_SECURITY_0, NULL, kd_common_get_device_name(), NULL);
+                    ret = wifi_prov_mgr_start_provisioning(WIFI_PROV_SECURITY_0, NULL, kd_common_get_device_name(), NULL);
                 }
                 else {
-                    wifi_prov_mgr_start_provisioning(WIFI_PROV_SECURITY_1, kd_common_provisioning_get_pop_token(), kd_common_get_device_name(), NULL);
+                    ret = wifi_prov_mgr_start_provisioning(WIFI_PROV_SECURITY_1, kd_common_provisioning_get_pop_token(), kd_common_get_device_name(), NULL);
+                }
+
+                if (ret != ESP_OK) {
+                    ESP_LOGE(TAG, "Failed to start provisioning: %s", esp_err_to_name(ret));
+                    wifi_prov_mgr_deinit();
+                    break;
                 }
 
 #ifndef KD_COMMON_CONSOLE_DISABLE
-                wifi_prov_mgr_endpoint_register(BLE_CONSOLE_ENDPOINT_NAME, ble_console_endpoint, NULL);
+                ret = wifi_prov_mgr_endpoint_register(BLE_CONSOLE_ENDPOINT_NAME, ble_console_endpoint, NULL);
+                if (ret != ESP_OK) {
+                    ESP_LOGE(TAG, "Failed to register console endpoint: %s", esp_err_to_name(ret));
+                }
 #endif // KD_COMMON_CONSOLE_DISABLE
 
                 provisioning_started = true;
@@ -128,6 +159,8 @@ void provisioning_task(void* pvParameter) {
 }
 
 static bool is_internet = false;
+static bool prov_cred_failed = false;  // Track if provisioning credentials failed
+
 bool kd_common_is_wifi_connected() {
     return is_internet;
 }
@@ -152,6 +185,12 @@ void provisioning_event_handler(void* arg, esp_event_base_t event_base, int32_t 
             wifiConnectionAttempts++;
             is_internet = false;
 
+            // Don't auto-reconnect if provisioning credentials failed - wait for new credentials
+            if (prov_cred_failed) {
+                ESP_LOGD(TAG, "Not reconnecting - waiting for new provisioning credentials");
+                break;
+            }
+
             if (wifiConnectionAttempts > 5 && !ever_connected) {
                 kd_common_notify_provisioning_task(ProvisioningTaskNotification_t::START_PROVISIONING);
             }
@@ -166,13 +205,23 @@ void provisioning_event_handler(void* arg, esp_event_base_t event_base, int32_t 
             wifiConnectionAttempts = 0;
             ever_connected = true;
             is_internet = true;
+            prov_cred_failed = false;  // Clear failure flag on successful connection
             kd_common_notify_provisioning_task(ProvisioningTaskNotification_t::STOP_PROVISIONING);
         }
     }
     else if (event_base == WIFI_PROV_EVENT) {
         switch (event_id) {
         case WIFI_PROV_CRED_FAIL: {
+            // Set flag to stop auto-reconnect attempts
+            prov_cred_failed = true;
+            ESP_LOGW(TAG, "WiFi credentials failed - resetting provisioning state machine");
             kd_common_notify_provisioning_task(ProvisioningTaskNotification_t::RESET_SM_ON_FAILURE);
+            break;
+        }
+        case WIFI_PROV_CRED_RECV: {
+            // New credentials received - clear failure flag and allow connection attempts
+            prov_cred_failed = false;
+            ESP_LOGI(TAG, "New WiFi credentials received");
             break;
         }
         case WIFI_PROV_END: {

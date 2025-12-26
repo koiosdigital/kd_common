@@ -6,200 +6,272 @@
 #include "esp_log.h"
 #include "esp_app_format.h"
 #include "esp_wifi.h"
-#include "esp_timer.h"
+
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 #include "cJSON.h"
 #include "kd_common.h"
 
+#include <algorithm>
 #include <cstring>
+#include <memory>
 
 static const char* TAG = "kd_ota";
 
 namespace {
-    struct HttpResponseBuffer {
-        char* data;
-        size_t capacity;
-        size_t len;
-    };
 
-    static void http_response_buffer_reset(HttpResponseBuffer* buffer) {
-        if (buffer == nullptr || buffer->data == nullptr || buffer->capacity == 0) {
-            return;
+// Configuration
+constexpr uint32_t CHECK_INTERVAL_MS = 12 * 60 * 60 * 1000;  // 12 hours
+constexpr uint32_t RETRY_DELAY_MS = 5000;
+constexpr uint32_t WIFI_WAIT_MS = 1000;
+constexpr size_t RESPONSE_BUFFER_SIZE = 512;
+constexpr size_t OTA_BUFFER_SIZE = 4096;
+
+// State
+TaskHandle_t task_handle = nullptr;
+bool boot_check_completed = false;
+bool task_running = false;
+
+// RAII wrapper for cJSON
+struct JsonDeleter {
+    void operator()(cJSON* json) const {
+        if (json) cJSON_Delete(json);
+    }
+};
+using JsonPtr = std::unique_ptr<cJSON, JsonDeleter>;
+
+// RAII wrapper for HTTP client
+class HttpClient {
+public:
+    explicit HttpClient(const esp_http_client_config_t* config)
+        : handle_(esp_http_client_init(config)) {}
+
+    ~HttpClient() {
+        if (handle_) {
+            esp_http_client_cleanup(handle_);
         }
-        buffer->len = 0;
-        buffer->data[0] = '\0';
     }
 
-    static esp_err_t http_event_handler(esp_http_client_event_t* evt) {
-        if (evt == nullptr) {
-            return ESP_OK;
-        }
+    HttpClient(const HttpClient&) = delete;
+    HttpClient& operator=(const HttpClient&) = delete;
 
-        auto* buffer = static_cast<HttpResponseBuffer*>(evt->user_data);
-        if (buffer == nullptr || buffer->data == nullptr || buffer->capacity < 2) {
-            return ESP_OK;
-        }
+    explicit operator bool() const { return handle_ != nullptr; }
+    esp_http_client_handle_t get() const { return handle_; }
 
-        switch (evt->event_id) {
-        case HTTP_EVENT_ON_DATA: {
-            if (evt->data == nullptr || evt->data_len <= 0) {
-                break;
-            }
+    esp_err_t set_header(const char* key, const char* value) {
+        return esp_http_client_set_header(handle_, key, value);
+    }
 
-            const size_t available = buffer->capacity - buffer->len - 1; // keep room for NUL
-            const size_t to_copy = (available < (size_t)evt->data_len) ? available : (size_t)evt->data_len;
-            if (to_copy == 0) {
-                break;
-            }
-            memcpy(buffer->data + buffer->len, evt->data, to_copy);
-            buffer->len += to_copy;
-            buffer->data[buffer->len] = '\0';
-            break;
-        }
-        case HTTP_EVENT_ON_CONNECTED:
-            http_response_buffer_reset(buffer);
-            break;
-        default:
-            break;
-        }
+    esp_err_t perform() {
+        return esp_http_client_perform(handle_);
+    }
 
+    int get_status_code() const {
+        return esp_http_client_get_status_code(handle_);
+    }
+
+private:
+    esp_http_client_handle_t handle_;
+};
+
+// Response buffer with automatic reset
+struct ResponseBuffer {
+    char data[RESPONSE_BUFFER_SIZE] = {};
+    size_t len = 0;
+
+    void reset() {
+        len = 0;
+        data[0] = '\0';
+    }
+
+    void append(const void* src, size_t src_len) {
+        const size_t available = sizeof(data) - len - 1;
+        const size_t to_copy = std::min(available, src_len);
+        if (to_copy > 0) {
+            std::memcpy(data + len, src, to_copy);
+            len += to_copy;
+            data[len] = '\0';
+        }
+    }
+};
+
+esp_err_t http_event_handler(esp_http_client_event_t* evt) {
+    if (!evt || !evt->user_data) {
         return ESP_OK;
     }
-} // namespace
 
-static bool boot_check_completed = false;
+    auto* buffer = static_cast<ResponseBuffer*>(evt->user_data);
 
-static void ota_update_task(void* pvParameter) {
-    bool has_done_boot_check = false;
-
-    char http_response_data[512] = { 0 };
-    HttpResponseBuffer response_buffer{ http_response_data, sizeof(http_response_data), 0 };
-
-    while (true) {
-        if (kd_common_is_wifi_connected() == false) {
-            ESP_LOGI(TAG, "waiting for wifi");
-            vTaskDelay(pdMS_TO_TICKS(1000));
-            continue;
+    switch (evt->event_id) {
+    case HTTP_EVENT_ON_CONNECTED:
+        buffer->reset();
+        break;
+    case HTTP_EVENT_ON_DATA:
+        if (evt->data && evt->data_len > 0) {
+            buffer->append(evt->data, evt->data_len);
         }
+        break;
+    default:
+        break;
+    }
 
-        if (has_done_boot_check) {
-            vTaskDelay(pdMS_TO_TICKS(1000 * 60 * 60 * 3)); // check for updates every 3 hours
-        }
+    return ESP_OK;
+}
 
-        ESP_LOGI(TAG, "checking for updates");
+// Check result enumeration
+enum class CheckResult {
+    Success,
+    UpdateAvailable,
+    NetworkError,
+    ParseError
+};
 
-        http_response_buffer_reset(&response_buffer);
+CheckResult check_for_update(const char** out_url) {
+    *out_url = nullptr;
 
-        esp_http_client_config_t config = {};
-        config.url = FIRMWARE_ENDPOINT_URL;
-        config.event_handler = http_event_handler;
-        config.crt_bundle_attach = esp_crt_bundle_attach;
-        config.user_data = &response_buffer;
+    ResponseBuffer response;
 
-        esp_http_client_handle_t http_client = esp_http_client_init(&config);
-        if (http_client == nullptr) {
-            ESP_LOGE(TAG, "failed to init http client");
-            continue;
-        }
+    esp_http_client_config_t config = {};
+    config.url = FIRMWARE_ENDPOINT_URL;
+    config.event_handler = http_event_handler;
+    config.crt_bundle_attach = esp_crt_bundle_attach;
+    config.user_data = &response;
 
-        //esp_app_desc
-        const esp_app_desc_t* app_desc = esp_app_get_description();
+    HttpClient client(&config);
+    if (!client) {
+        ESP_LOGD(TAG, "Failed to init HTTP client");
+        return CheckResult::NetworkError;
+    }
 
-        esp_http_client_set_header(http_client, "x-firmware-project", app_desc->project_name);
-        esp_http_client_set_header(http_client, "x-firmware-version", app_desc->version);
+    const esp_app_desc_t* app_desc = esp_app_get_description();
+    client.set_header("x-firmware-project", app_desc->project_name);
+    client.set_header("x-firmware-version", app_desc->version);
 
 #ifdef FIRMWARE_VARIANT
-        esp_http_client_set_header(http_client, "x-firmware-variant", FIRMWARE_VARIANT);
+    client.set_header("x-firmware-variant", FIRMWARE_VARIANT);
 #endif
 
-        esp_err_t perform_err = esp_http_client_perform(http_client);
-        if (perform_err != ESP_OK) {
-            ESP_LOGE(TAG, "http request failed: %s", esp_err_to_name(perform_err));
-            esp_http_client_cleanup(http_client);
-            continue;
-        }
+    if (client.perform() != ESP_OK || client.get_status_code() != 200) {
+        ESP_LOGD(TAG, "HTTP request failed (status: %d)", client.get_status_code());
+        return CheckResult::NetworkError;
+    }
 
-        if (esp_http_client_get_status_code(http_client) != 200) {
-            ESP_LOGE(TAG, "http request failed: status %d", esp_http_client_get_status_code(http_client));
-            esp_http_client_cleanup(http_client);
-            continue;
-        }
+    JsonPtr root(cJSON_Parse(response.data));
+    if (!root) {
+        ESP_LOGD(TAG, "Failed to parse response");
+        return CheckResult::ParseError;
+    }
 
-        ESP_LOGI(TAG, "response: %s", http_response_data);
-        esp_http_client_cleanup(http_client);
+    cJSON* update_item = cJSON_GetObjectItem(root.get(), "update_available");
+    if (!update_item) {
+        ESP_LOGD(TAG, "Missing update_available field");
+        return CheckResult::ParseError;
+    }
 
-        cJSON* root = cJSON_Parse(http_response_data);
-        if (root == NULL) {
-            ESP_LOGE(TAG, "failed to parse json");
-            continue;
-        }
+    if (cJSON_IsFalse(update_item)) {
+        return CheckResult::Success;
+    }
 
-        http_response_buffer_reset(&response_buffer);
+    cJSON* url_item = cJSON_GetObjectItem(root.get(), "ota_url");
+    if (!url_item || !cJSON_IsString(url_item) || !url_item->valuestring || !url_item->valuestring[0]) {
+        ESP_LOGW(TAG, "Update available but no valid URL");
+        return CheckResult::Success;
+    }
 
-        if (!cJSON_HasObjectItem(root, "update_available")) {
-            ESP_LOGE(TAG, "failed to get update_available");
-            cJSON_Delete(root);
-            continue;
-        }
+    *out_url = strdup(url_item->valuestring);
+    return *out_url ? CheckResult::UpdateAvailable : CheckResult::Success;
+}
 
-        has_done_boot_check = true;
+bool perform_ota_update(const char* url) {
+    ESP_LOGI(TAG, "Downloading update...");
+
+    esp_http_client_config_t http_config = {};
+    http_config.url = url;
+    http_config.buffer_size = OTA_BUFFER_SIZE;
+    http_config.buffer_size_tx = OTA_BUFFER_SIZE;
+    http_config.crt_bundle_attach = esp_crt_bundle_attach;
+
+    esp_https_ota_config_t ota_config = {};
+    ota_config.http_config = &http_config;
+
+    esp_err_t err = esp_https_ota(&ota_config);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Update failed: %s", esp_err_to_name(err));
+        return false;
+    }
+
+    ESP_LOGI(TAG, "Update complete, restarting...");
+    esp_restart();
+    return true;  // Never reached
+}
+
+bool perform_update_check() {
+    const char* ota_url = nullptr;
+    CheckResult result = check_for_update(&ota_url);
+
+    // Ensure cleanup of URL on all exit paths
+    auto url_cleanup = [](const char* p) { if (p) free(const_cast<char*>(p)); };
+    std::unique_ptr<const char, decltype(url_cleanup)> url_guard(ota_url, url_cleanup);
+
+    switch (result) {
+    case CheckResult::Success:
+        ESP_LOGI(TAG, "Up to date");
         boot_check_completed = true;
+        return true;
 
-        if (cJSON_IsFalse(cJSON_GetObjectItem(root, "update_available"))) {
-            ESP_LOGI(TAG, "no update available");
-            cJSON_Delete(root);
+    case CheckResult::UpdateAvailable:
+        ESP_LOGI(TAG, "Update available");
+        boot_check_completed = true;
+        perform_ota_update(ota_url);
+        return true;
+
+    case CheckResult::NetworkError:
+    case CheckResult::ParseError:
+        return false;
+    }
+
+    return false;
+}
+
+void ota_task_func(void*) {
+    // Initial boot check - retry until successful
+    while (!boot_check_completed) {
+        if (!kd_common_is_wifi_connected()) {
+            vTaskDelay(pdMS_TO_TICKS(WIFI_WAIT_MS));
             continue;
         }
 
-        if (!cJSON_HasObjectItem(root, "ota_url")) {
-            ESP_LOGE(TAG, "failed to get ota_url");
-            cJSON_Delete(root);
-            continue;
+        if (perform_update_check()) {
+            break;
         }
 
-        const char* ota_url_tmp = cJSON_GetObjectItem(root, "ota_url")->valuestring;
-        if (ota_url_tmp == nullptr || ota_url_tmp[0] == '\0') {
-            ESP_LOGE(TAG, "ota_url missing or empty");
-            cJSON_Delete(root);
-            continue;
+        vTaskDelay(pdMS_TO_TICKS(RETRY_DELAY_MS));
+    }
+
+    // Periodic checks
+    while (true) {
+        vTaskDelay(pdMS_TO_TICKS(CHECK_INTERVAL_MS));
+
+        if (kd_common_is_wifi_connected()) {
+            perform_update_check();
         }
-
-        char* ota_url = strdup(ota_url_tmp);
-        if (ota_url == nullptr) {
-            ESP_LOGE(TAG, "failed to allocate ota_url");
-            cJSON_Delete(root);
-            continue;
-        }
-
-        cJSON_Delete(root);
-
-        //do ota
-        esp_http_client_config_t config2 = {
-            .url = ota_url,
-            .buffer_size = 4096,
-            .buffer_size_tx = 4096,
-            .crt_bundle_attach = esp_crt_bundle_attach,
-        };
-
-        esp_https_ota_config_t ota_config = {
-            .http_config = &config2,
-        };
-
-        esp_err_t err = esp_https_ota(&ota_config);
-        free(ota_url);
-
-        if (err != ESP_OK) {
-            ESP_LOGE(TAG, "update failed: %s", esp_err_to_name(err));
-            continue;
-        }
-
-        ESP_LOGI(TAG, "update successful");
-        esp_restart();
     }
 }
 
+}  // namespace
+
 void ota_init() {
-    xTaskCreate(ota_update_task, "ota_task", 8192, NULL, 5, NULL);
+    if (task_running) {
+        return;
+    }
+
+    task_running = true;
+
+    if (xTaskCreate(ota_task_func, "ota", 8192, nullptr, 5, &task_handle) != pdPASS) {
+        ESP_LOGE(TAG, "Failed to create task");
+        task_running = false;
+    }
 }
 
 bool ota_has_completed_boot_check() {

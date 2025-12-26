@@ -13,42 +13,18 @@
 
 #include "kd_common.h"
 #include "crypto.h"
+#include "ble_console_protocol.h"
 
 static const char* TAG = "ble_console";
 
-static constexpr uint8_t BLE_CONSOLE_FRAME_MAGIC = 0xA5;
-static constexpr size_t BLE_CONSOLE_MAX_PAYLOAD = 4096;
-static constexpr size_t BLE_CONSOLE_MAX_FRAME = 3 + BLE_CONSOLE_MAX_PAYLOAD;
-static constexpr size_t BLE_CONSOLE_CHUNK_SIZE = 512;
 
 static constexpr size_t BLE_CONSOLE_PEM_BUFFER_SIZE = 4096;
 
-static uint8_t ble_console_in_buffer[BLE_CONSOLE_MAX_FRAME] = { 0 };
-static size_t ble_console_in_len = 0;
+static uint8_t crypto_retry_count = 0;
+static constexpr uint8_t CRYPTO_MAX_RETRIES = 3;
 
-static uint8_t ble_console_out_buffer[BLE_CONSOLE_MAX_FRAME] = { 0 };
-static size_t ble_console_out_pos = 0;
-static size_t ble_console_out_len = 0;
-static bool ble_console_multipart_sending = false;
-
-static void ble_console_reset_input() {
-    memset(ble_console_in_buffer, 0, sizeof(ble_console_in_buffer));
-    ble_console_in_len = 0;
-}
-
-static void ble_console_reset_output() {
-    memset(ble_console_out_buffer, 0, sizeof(ble_console_out_buffer));
-    ble_console_out_pos = 0;
-    ble_console_out_len = 0;
-    ble_console_multipart_sending = false;
-}
-
-static void ble_console_reset_all() {
-    ble_console_reset_input();
-    ble_console_reset_output();
-}
-
-static void ble_console_make_error_response(const char* detail) {
+static void make_error_response(const char* detail) {
+    ESP_LOGI(TAG, "error response: %s", detail ? detail : "error");
     Kd__V1__CommandResult result = KD__V1__COMMAND_RESULT__INIT;
     result.success = false;
     result.error_code = -1;
@@ -63,86 +39,54 @@ static void ble_console_make_error_response(const char* detail) {
 
     size_t payload_len = kd__v1__console_message__get_packed_size(&resp);
     if (payload_len > BLE_CONSOLE_MAX_PAYLOAD) {
-        ESP_LOGE(TAG, "internal error response too large (%u)", (unsigned)payload_len);
-        ble_console_reset_output();
+        ESP_LOGE(TAG, "error response too large");
+        ble_protocol_reset_output();
         return;
     }
 
-    ble_console_out_buffer[0] = BLE_CONSOLE_FRAME_MAGIC;
-    ble_console_out_buffer[1] = (uint8_t)((payload_len >> 8) & 0xFF);
-    ble_console_out_buffer[2] = (uint8_t)(payload_len & 0xFF);
-    kd__v1__console_message__pack(&resp, ble_console_out_buffer + 3);
+    uint8_t* out_buffer = (uint8_t*)malloc(payload_len);
+    if (out_buffer == NULL) {
+        ESP_LOGE(TAG, "malloc failed for error response");
+        return;
+    }
 
-    ble_console_out_len = 3 + payload_len;
-    ble_console_out_pos = 0;
-    ble_console_multipart_sending = true;
+    kd__v1__console_message__pack(&resp, out_buffer);
+    ble_protocol_set_output(out_buffer, payload_len);
+    free(out_buffer);
 }
 
-static esp_err_t ble_console_send_next_chunk(uint8_t** outbuf, ssize_t* outlen) {
-    if (outbuf == NULL || outlen == NULL) {
-        return ESP_ERR_INVALID_ARG;
-    }
-
-    *outbuf = NULL;
-    *outlen = 0;
-
-    size_t remaining = (ble_console_out_len > ble_console_out_pos) ? (ble_console_out_len - ble_console_out_pos) : 0;
-    size_t chunk = remaining;
-    if (chunk > BLE_CONSOLE_CHUNK_SIZE) {
-        chunk = BLE_CONSOLE_CHUNK_SIZE;
-    }
-
-    if (chunk == 0) {
-        ble_console_reset_all();
-        return ESP_OK;
-    }
-
-    uint8_t* resp = (uint8_t*)malloc(chunk);
+static void prepare_response(Kd__V1__ConsoleMessage* resp) {
     if (resp == NULL) {
-        ble_console_reset_all();
-        return ESP_ERR_NO_MEM;
-    }
-
-    memcpy(resp, ble_console_out_buffer + ble_console_out_pos, chunk);
-    ble_console_out_pos += chunk;
-
-    *outbuf = resp;
-    *outlen = (ssize_t)chunk;
-
-    if (ble_console_out_pos >= ble_console_out_len) {
-        ble_console_reset_all();
-    }
-
-    return ESP_OK;
-}
-
-static void ble_console_prepare_response(Kd__V1__ConsoleMessage* resp) {
-    if (resp == NULL) {
-        ble_console_make_error_response("null response");
+        make_error_response("null response");
         return;
     }
 
     size_t payload_len = kd__v1__console_message__get_packed_size(resp);
     if (payload_len > BLE_CONSOLE_MAX_PAYLOAD) {
-        ble_console_make_error_response("response too large");
+        make_error_response("response too large");
         return;
     }
 
-    ble_console_out_buffer[0] = BLE_CONSOLE_FRAME_MAGIC;
-    ble_console_out_buffer[1] = (uint8_t)((payload_len >> 8) & 0xFF);
-    ble_console_out_buffer[2] = (uint8_t)(payload_len & 0xFF);
-    kd__v1__console_message__pack(resp, ble_console_out_buffer + 3);
+    uint8_t* out_buffer = (uint8_t*)malloc(payload_len);
+    if (out_buffer == NULL) {
+        ESP_LOGE(TAG, "malloc failed for response");
+        make_error_response("no mem");
+        return;
+    }
 
-    ble_console_out_len = 3 + payload_len;
-    ble_console_out_pos = 0;
-    ble_console_multipart_sending = true;
+    kd__v1__console_message__pack(resp, out_buffer);
+    ble_protocol_set_output(out_buffer, payload_len);
+    free(out_buffer);
+    ESP_LOGI(TAG, "response ready: %u bytes", (unsigned)payload_len);
 }
 
-static void ble_console_handle_request(const Kd__V1__ConsoleMessage* req) {
+static void handle_request(const Kd__V1__ConsoleMessage* req) {
     if (req == NULL) {
-        ble_console_make_error_response("unpack failed");
+        make_error_response("unpack failed");
         return;
     }
+
+    ESP_LOGI(TAG, "handle request: payload_case=%d", req->payload_case);
 
     switch (req->payload_case) {
     case KD__V1__CONSOLE_MESSAGE__PAYLOAD_GET_CSR_REQUEST: {
@@ -159,8 +103,7 @@ static void ble_console_handle_request(const Kd__V1__ConsoleMessage* req) {
         if (csr_buf == NULL) {
             result.error_code = ESP_ERR_NO_MEM;
             result.detail = (char*)"no mem";
-        }
-        else {
+        } else {
             size_t csr_len = BLE_CONSOLE_PEM_BUFFER_SIZE;
             esp_err_t err = crypto_get_csr((char*)csr_buf, &csr_len);
             if (err == ESP_OK) {
@@ -168,8 +111,7 @@ static void ble_console_handle_request(const Kd__V1__ConsoleMessage* req) {
                 result.detail = (char*)"ok";
                 get_csr_resp.csr_pem.data = csr_buf;
                 get_csr_resp.csr_pem.len = csr_len;
-            }
-            else {
+            } else {
                 result.error_code = err;
                 result.detail = (char*)"no csr";
             }
@@ -178,8 +120,7 @@ static void ble_console_handle_request(const Kd__V1__ConsoleMessage* req) {
         Kd__V1__ConsoleMessage resp = KD__V1__CONSOLE_MESSAGE__INIT;
         resp.payload_case = KD__V1__CONSOLE_MESSAGE__PAYLOAD_GET_CSR_RESPONSE;
         resp.get_csr_response = &get_csr_resp;
-
-        ble_console_prepare_response(&resp);
+        prepare_response(&resp);
         free(csr_buf);
         break;
     }
@@ -196,8 +137,7 @@ static void ble_console_handle_request(const Kd__V1__ConsoleMessage* req) {
             if (err == ESP_OK) {
                 result.success = true;
                 result.detail = (char*)"ok";
-            }
-            else {
+            } else {
                 result.error_code = err;
                 result.detail = (char*)"failed";
             }
@@ -209,8 +149,7 @@ static void ble_console_handle_request(const Kd__V1__ConsoleMessage* req) {
         Kd__V1__ConsoleMessage resp = KD__V1__CONSOLE_MESSAGE__INIT;
         resp.payload_case = KD__V1__CONSOLE_MESSAGE__PAYLOAD_SET_DEVICE_CERT_RESPONSE;
         resp.set_device_cert_response = &set_resp;
-
-        ble_console_prepare_response(&resp);
+        prepare_response(&resp);
         break;
     }
 
@@ -224,8 +163,7 @@ static void ble_console_handle_request(const Kd__V1__ConsoleMessage* req) {
         if (err == ESP_OK) {
             result.success = true;
             result.detail = (char*)"ok";
-        }
-        else {
+        } else {
             result.error_code = err;
         }
 
@@ -235,7 +173,7 @@ static void ble_console_handle_request(const Kd__V1__ConsoleMessage* req) {
         Kd__V1__ConsoleMessage resp = KD__V1__CONSOLE_MESSAGE__INIT;
         resp.payload_case = KD__V1__CONSOLE_MESSAGE__PAYLOAD_CLEAR_DEVICE_CERT_RESPONSE;
         resp.clear_device_cert_response = &clear_resp;
-        ble_console_prepare_response(&resp);
+        prepare_response(&resp);
         break;
     }
 
@@ -253,8 +191,7 @@ static void ble_console_handle_request(const Kd__V1__ConsoleMessage* req) {
         if (cert_buf == NULL) {
             result.error_code = ESP_ERR_NO_MEM;
             result.detail = (char*)"no mem";
-        }
-        else {
+        } else {
             size_t cert_len = BLE_CONSOLE_PEM_BUFFER_SIZE;
             esp_err_t err = kd_common_get_device_cert((char*)cert_buf, &cert_len);
             if (err == ESP_OK) {
@@ -262,8 +199,7 @@ static void ble_console_handle_request(const Kd__V1__ConsoleMessage* req) {
                 result.detail = (char*)"ok";
                 get_cert_resp.cert_pem.data = cert_buf;
                 get_cert_resp.cert_pem.len = cert_len;
-            }
-            else {
+            } else {
                 result.error_code = err;
                 result.detail = (char*)"no cert";
             }
@@ -272,7 +208,7 @@ static void ble_console_handle_request(const Kd__V1__ConsoleMessage* req) {
         Kd__V1__ConsoleMessage resp = KD__V1__CONSOLE_MESSAGE__INIT;
         resp.payload_case = KD__V1__CONSOLE_MESSAGE__PAYLOAD_GET_DEVICE_CERT_RESPONSE;
         resp.get_device_cert_response = &get_cert_resp;
-        ble_console_prepare_response(&resp);
+        prepare_response(&resp);
         free(cert_buf);
         break;
     }
@@ -287,6 +223,17 @@ static void ble_console_handle_request(const Kd__V1__ConsoleMessage* req) {
         if (json != NULL) {
             result.success = true;
             result.detail = (char*)"ok";
+            crypto_retry_count = 0;
+        } else {
+            crypto_retry_count++;
+            if (crypto_retry_count >= CRYPTO_MAX_RETRIES) {
+                result.error_code = -1;
+                result.detail = (char*)"crypto error: max retries";
+                crypto_retry_count = 0;
+            } else {
+                result.error_code = -2;
+                result.detail = (char*)"crypto error: retry";
+            }
         }
 
         Kd__V1__GetDsParamsResponse ds_resp = KD__V1__GET_DS_PARAMS_RESPONSE__INIT;
@@ -296,7 +243,7 @@ static void ble_console_handle_request(const Kd__V1__ConsoleMessage* req) {
         Kd__V1__ConsoleMessage resp = KD__V1__CONSOLE_MESSAGE__INIT;
         resp.payload_case = KD__V1__CONSOLE_MESSAGE__PAYLOAD_GET_DS_PARAMS_RESPONSE;
         resp.get_ds_params_response = &ds_resp;
-        ble_console_prepare_response(&resp);
+        prepare_response(&resp);
 
         if (json) {
             free(json);
@@ -316,14 +263,12 @@ static void ble_console_handle_request(const Kd__V1__ConsoleMessage* req) {
             if (params_copy == NULL) {
                 result.error_code = ESP_ERR_NO_MEM;
                 result.detail = (char*)"no mem";
-            }
-            else {
-                esp_err_t err = crypto_store_ds_params_json(params_copy); // takes ownership and frees
+            } else {
+                esp_err_t err = crypto_store_ds_params_json(params_copy);
                 if (err == ESP_OK) {
                     result.success = true;
                     result.detail = (char*)"ok";
-                }
-                else {
+                } else {
                     result.error_code = err;
                     result.detail = (char*)"failed";
                 }
@@ -336,7 +281,7 @@ static void ble_console_handle_request(const Kd__V1__ConsoleMessage* req) {
         Kd__V1__ConsoleMessage resp = KD__V1__CONSOLE_MESSAGE__INIT;
         resp.payload_case = KD__V1__CONSOLE_MESSAGE__PAYLOAD_SET_DS_PARAMS_RESPONSE;
         resp.set_ds_params_response = &set_resp;
-        ble_console_prepare_response(&resp);
+        prepare_response(&resp);
         break;
     }
 
@@ -353,7 +298,7 @@ static void ble_console_handle_request(const Kd__V1__ConsoleMessage* req) {
         Kd__V1__ConsoleMessage resp = KD__V1__CONSOLE_MESSAGE__INIT;
         resp.payload_case = KD__V1__CONSOLE_MESSAGE__PAYLOAD_CRYPTO_STATUS_RESPONSE;
         resp.crypto_status_response = &status_resp;
-        ble_console_prepare_response(&resp);
+        prepare_response(&resp);
         break;
     }
 
@@ -369,13 +314,11 @@ static void ble_console_handle_request(const Kd__V1__ConsoleMessage* req) {
             if (err == ESP_OK) {
                 result.success = true;
                 result.detail = (char*)"ok";
-            }
-            else {
+            } else {
                 result.error_code = err;
                 result.detail = (char*)"failed";
             }
-        }
-        else {
+        } else {
             result.error_code = ESP_ERR_INVALID_ARG;
         }
 
@@ -385,12 +328,12 @@ static void ble_console_handle_request(const Kd__V1__ConsoleMessage* req) {
         Kd__V1__ConsoleMessage resp = KD__V1__CONSOLE_MESSAGE__INIT;
         resp.payload_case = KD__V1__CONSOLE_MESSAGE__PAYLOAD_SET_CLAIM_TOKEN_RESPONSE;
         resp.set_claim_token_response = &set_resp;
-        ble_console_prepare_response(&resp);
+        prepare_response(&resp);
         break;
     }
 
     default:
-        ble_console_make_error_response("unsupported request");
+        make_error_response("unsupported request");
         break;
     }
 }
@@ -406,74 +349,85 @@ esp_err_t ble_console_endpoint(uint32_t session_id, const uint8_t* inbuf, ssize_
     *outbuf = NULL;
     *outlen = 0;
 
-    // If we're in the middle of sending a multipart response, ignore input and continue sending.
-    if (ble_console_multipart_sending) {
-        return ble_console_send_next_chunk(outbuf, outlen);
-    }
-
-    // Accumulate input bytes.
-    if (inbuf != NULL && inlen > 0) {
-        if ((size_t)inlen > (sizeof(ble_console_in_buffer) - ble_console_in_len)) {
-            ESP_LOGW(TAG, "input overflow, resetting");
-            ble_console_reset_input();
-        }
-
-        size_t to_copy = (size_t)inlen;
-        if (to_copy > (sizeof(ble_console_in_buffer) - ble_console_in_len)) {
-            to_copy = sizeof(ble_console_in_buffer) - ble_console_in_len;
-        }
-        memcpy(ble_console_in_buffer + ble_console_in_len, inbuf, to_copy);
-        ble_console_in_len += to_copy;
-    }
-
-    // Find frame magic.
-    size_t start = 0;
-    while (start < ble_console_in_len && ble_console_in_buffer[start] != BLE_CONSOLE_FRAME_MAGIC) {
-        start++;
-    }
-    if (start > 0) {
-        // Discard leading noise bytes.
-        memmove(ble_console_in_buffer, ble_console_in_buffer + start, ble_console_in_len - start);
-        ble_console_in_len -= start;
-    }
-
-    // Need at least header.
-    if (ble_console_in_len < 3) {
+    if (inbuf == NULL || inlen == 0) {
         return ESP_OK;
     }
 
-    if (ble_console_in_buffer[0] != BLE_CONSOLE_FRAME_MAGIC) {
-        ble_console_reset_input();
+    // Handle single-byte control commands
+    if (inlen == 1) {
+        switch (inbuf[0]) {
+        case BLE_CMD_RESET: {
+            ESP_LOGI(TAG, "CMD_RESET");
+            ble_protocol_reset_all();
+            *outbuf = ble_protocol_build_single_response(BLE_RSP_ACK, (size_t*)outlen);
+            return ESP_OK;
+        }
+
+        case BLE_CMD_NEXT: {
+            ESP_LOGI(TAG, "CMD_NEXT");
+            if (ble_protocol_has_output()) {
+                *outbuf = ble_protocol_build_next_chunk((size_t*)outlen);
+                if (*outbuf == NULL) {
+                    *outbuf = ble_protocol_build_single_response(BLE_RSP_EMPTY, (size_t*)outlen);
+                }
+            } else {
+                *outbuf = ble_protocol_build_single_response(BLE_RSP_EMPTY, (size_t*)outlen);
+            }
+            return ESP_OK;
+        }
+
+        case BLE_CMD_RETRANSMIT: {
+            ESP_LOGI(TAG, "CMD_RETRANSMIT");
+            *outbuf = ble_protocol_build_retransmit((size_t*)outlen);
+            if (*outbuf == NULL) {
+                *outbuf = ble_protocol_build_single_response(BLE_RSP_EMPTY, (size_t*)outlen);
+            }
+            return ESP_OK;
+        }
+
+        default:
+            // Unknown single-byte command, ignore
+            return ESP_OK;
+        }
+    }
+
+    // Handle data frames
+    if (inbuf[0] == BLE_FRAME_MAGIC) {
+        ble_receive_result_t result = ble_protocol_receive_chunk(inbuf, (size_t)inlen);
+
+        if (result == BLE_RECEIVE_CRC_ERROR) {
+            // CRC error - request retransmit
+            *outbuf = ble_protocol_build_single_response(BLE_CMD_RETRANSMIT, (size_t*)outlen);
+            return ESP_OK;
+        }
+
+        if (result == BLE_RECEIVE_COMPLETE) {
+            ESP_LOGI(TAG, "request complete, processing...");
+
+            const uint8_t* input_data = ble_protocol_get_input_data();
+            size_t input_len = ble_protocol_get_input_len();
+
+            Kd__V1__ConsoleMessage* req = kd__v1__console_message__unpack(NULL, input_len, input_data);
+            handle_request(req);
+            if (req != NULL) {
+                kd__v1__console_message__free_unpacked(req, NULL);
+            }
+            ble_protocol_reset_input();
+
+            // Send first response chunk
+            if (ble_protocol_has_output()) {
+                *outbuf = ble_protocol_build_next_chunk((size_t*)outlen);
+            }
+        } else if (result == BLE_RECEIVE_OK) {
+            // More chunks expected - request next chunk
+            *outbuf = ble_protocol_build_single_response(BLE_CMD_NEXT, (size_t*)outlen);
+        }
+
         return ESP_OK;
     }
 
-    size_t payload_len = ((size_t)ble_console_in_buffer[1] << 8) | (size_t)ble_console_in_buffer[2];
-    if (payload_len > BLE_CONSOLE_MAX_PAYLOAD) {
-        ESP_LOGW(TAG, "payload too large: %u", (unsigned)payload_len);
-        ble_console_make_error_response("payload too large");
-        ble_console_reset_input();
-    }
-    else if (ble_console_in_len >= (3 + payload_len)) {
-        const uint8_t* payload = ble_console_in_buffer + 3;
-        Kd__V1__ConsoleMessage* req = kd__v1__console_message__unpack(NULL, payload_len, payload);
-        ble_console_handle_request(req);
-        if (req != NULL) {
-            kd__v1__console_message__free_unpacked(req, NULL);
-        }
-
-        // Remove the frame from input buffer.
-        size_t remaining = ble_console_in_len - (3 + payload_len);
-        if (remaining > 0) {
-            memmove(ble_console_in_buffer, ble_console_in_buffer + (3 + payload_len), remaining);
-        }
-        ble_console_in_len = remaining;
-    }
-
-    // If a response is now ready, send first chunk immediately.
-    if (ble_console_multipart_sending) {
-        return ble_console_send_next_chunk(outbuf, outlen);
-    }
-
+    // Unknown frame type
+    ESP_LOGW(TAG, "unknown frame type: 0x%02X", inbuf[0]);
     return ESP_OK;
 }
 
