@@ -22,6 +22,8 @@
 #include "kd_common.h"
 #include "crypto.h"
 
+#include <memory>
+
 #if SOC_USB_SERIAL_JTAG_SUPPORTED
 #if !CONFIG_ESP_CONSOLE_SECONDARY_NONE
 #warning "A secondary serial console is not useful when using the console component. Please disable it in menuconfig."
@@ -29,39 +31,61 @@
 #endif
 
 static const char* TAG = "console";
-bool use_printf = false;
-uint32_t output_buffer_pos = 0;
-char* output_buffer = nullptr;
 
-static constexpr size_t CONSOLE_OUTPUT_BUFFER_SIZE = 4096;
+namespace {
 
-static int console_out(const char* format, ...)
+constexpr size_t OUTPUT_BUFFER_SIZE = 4096;
+
+// Encapsulated console output state
+struct ConsoleContext {
+    bool use_printf = true;
+    char* output_buffer = nullptr;
+    size_t output_buffer_pos = 0;
+
+    void reset_buffer() {
+        output_buffer = nullptr;
+        output_buffer_pos = 0;
+    }
+};
+
+ConsoleContext ctx;
+
+// RAII guard for output mode - restores use_printf on destruction
+class OutputModeGuard {
+public:
+    explicit OutputModeGuard(bool new_mode) : saved_mode_(ctx.use_printf) {
+        ctx.use_printf = new_mode;
+    }
+    ~OutputModeGuard() {
+        ctx.use_printf = saved_mode_;
+    }
+    OutputModeGuard(const OutputModeGuard&) = delete;
+    OutputModeGuard& operator=(const OutputModeGuard&) = delete;
+private:
+    bool saved_mode_;
+};
+
+}  // namespace
+
+int console_out(const char* format, ...)
 {
     va_list args;
     va_start(args, format);
 
-    if (use_printf) {
+    if (ctx.use_printf) {
         vprintf(format, args);
-    }
-    else {
-        if (output_buffer == nullptr) {
-            ESP_LOGE(TAG, "cannot override command output buffer if null");
-        }
-        else {
-            if (output_buffer_pos >= (CONSOLE_OUTPUT_BUFFER_SIZE - 1)) {
-                ESP_LOGW(TAG, "output buffer overflow, truncating output");
-            }
-            else {
-                const size_t available = CONSOLE_OUTPUT_BUFFER_SIZE - output_buffer_pos;
-                int written = vsnprintf(output_buffer + output_buffer_pos, available, format, args);
-                if (written > 0) {
-                    // vsnprintf returns the number of chars that would have been written (excluding NUL).
-                    output_buffer_pos += (uint32_t)written;
-                    if (output_buffer_pos >= CONSOLE_OUTPUT_BUFFER_SIZE) {
-                        output_buffer_pos = (uint32_t)(CONSOLE_OUTPUT_BUFFER_SIZE - 1);
-                        output_buffer[output_buffer_pos] = '\0';
-                    }
-                }
+    } else if (ctx.output_buffer == nullptr) {
+        ESP_LOGE(TAG, "cannot override command output buffer if null");
+    } else if (ctx.output_buffer_pos >= (OUTPUT_BUFFER_SIZE - 1)) {
+        ESP_LOGW(TAG, "output buffer overflow, truncating output");
+    } else {
+        const size_t available = OUTPUT_BUFFER_SIZE - ctx.output_buffer_pos;
+        int written = vsnprintf(ctx.output_buffer + ctx.output_buffer_pos, available, format, args);
+        if (written > 0) {
+            ctx.output_buffer_pos += static_cast<size_t>(written);
+            if (ctx.output_buffer_pos >= OUTPUT_BUFFER_SIZE) {
+                ctx.output_buffer_pos = OUTPUT_BUFFER_SIZE - 1;
+                ctx.output_buffer[ctx.output_buffer_pos] = '\0';
             }
         }
     }
@@ -88,11 +112,16 @@ static void register_free(void)
     ESP_ERROR_CHECK(esp_console_cmd_register(&cmd));
 }
 
-/* 'heap' command prints minimum heap size */
-static int heap_size(int argc, char** argv)
+/* 'heap' command prints heap statistics */
+static int heap_info(int argc, char** argv)
 {
-    uint32_t heap_size = heap_caps_get_minimum_free_size(MALLOC_CAP_DEFAULT);
-    console_out("min heap size: %" PRIu32 "\n", heap_size);
+    uint32_t free_internal = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+    uint32_t free_external = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+    uint32_t min_internal = heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL);
+
+    console_out("free_internal: %" PRIu32 "\n", free_internal);
+    console_out("free_external: %" PRIu32 "\n", free_external);
+    console_out("internal_watermark: %" PRIu32 "\n", min_internal);
     return 0;
 }
 
@@ -100,11 +129,59 @@ static void register_heap(void)
 {
     const esp_console_cmd_t heap_cmd = {
         .command = "heap",
-        .help = "Get minimum size of free heap memory that was available during program execution",
+        .help = "Get heap memory statistics (internal, external, watermark)",
         .hint = NULL,
-        .func = &heap_size,
+        .func = &heap_info,
     };
     ESP_ERROR_CHECK(esp_console_cmd_register(&heap_cmd));
+}
+
+/* 'task_dump' command prints task info */
+static int task_dump(int argc, char** argv)
+{
+    UBaseType_t num_tasks = uxTaskGetNumberOfTasks();
+    TaskStatus_t* task_array = (TaskStatus_t*)malloc(num_tasks * sizeof(TaskStatus_t));
+    if (task_array == nullptr) {
+        console_out("error: failed to allocate task array\n");
+        return 1;
+    }
+
+    uint32_t total_runtime;
+    num_tasks = uxTaskGetSystemState(task_array, num_tasks, &total_runtime);
+
+    console_out("%-16s %5s %5s %10s\n", "Name", "State", "Prio", "Stack");
+    console_out("%-16s %5s %5s %10s\n", "----", "-----", "----", "-----");
+
+    for (UBaseType_t i = 0; i < num_tasks; i++) {
+        const char* state;
+        switch (task_array[i].eCurrentState) {
+            case eRunning:   state = "RUN"; break;
+            case eReady:     state = "RDY"; break;
+            case eBlocked:   state = "BLK"; break;
+            case eSuspended: state = "SUS"; break;
+            case eDeleted:   state = "DEL"; break;
+            default:         state = "???"; break;
+        }
+        console_out("%-16s %5s %5u %10u\n",
+            task_array[i].pcTaskName,
+            state,
+            (unsigned)task_array[i].uxCurrentPriority,
+            (unsigned)task_array[i].usStackHighWaterMark);
+    }
+
+    free(task_array);
+    return 0;
+}
+
+static void register_task_dump(void)
+{
+    const esp_console_cmd_t cmd = {
+        .command = "task_dump",
+        .help = "Print task information (name, state, priority, stack high water mark)",
+        .hint = NULL,
+        .func = &task_dump,
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&cmd));
 }
 
 #ifndef KD_COMMON_CRYPTO_DISABLE
@@ -457,27 +534,26 @@ static void register_check_ota_updates(void)
 }
 
 char* kd_common_run_command(char* input, int* return_code) {
-    use_printf = false;
-
-    output_buffer = (char*)calloc(CONSOLE_OUTPUT_BUFFER_SIZE, sizeof(char));
-    if (output_buffer == NULL) {
+    // Allocate output buffer with RAII
+    std::unique_ptr<char[]> buffer(new (std::nothrow) char[OUTPUT_BUFFER_SIZE]());
+    if (!buffer) {
         ESP_LOGE(TAG, "failed to allocate output buffer");
-        return NULL;
+        return nullptr;
     }
 
-    output_buffer_pos = 0;
+    // Set up context for capture mode
+    ctx.output_buffer = buffer.get();
+    ctx.output_buffer_pos = 0;
+
+    // RAII guard restores use_printf and clears buffer pointer on exit
+    OutputModeGuard guard(false);
 
     int local_return_code = 0;
-    int* effective_return_code = (return_code != nullptr) ? return_code : &local_return_code;
+    esp_console_run(input, return_code ? return_code : &local_return_code);
 
-    esp_console_run(input, effective_return_code);
-
-    use_printf = true;
-
-    // Return the captured output and clear the global pointer to avoid accidental reuse.
-    char* result = output_buffer;
-    output_buffer = nullptr;
-    return result;
+    // Transfer ownership to caller
+    ctx.reset_buffer();
+    return buffer.release();
 }
 
 void console_init() {
@@ -490,6 +566,7 @@ void console_init() {
     esp_console_register_help_command();
     register_free();
     register_heap();
+    register_task_dump();
 
 #ifndef KD_COMMON_CRYPTO_DISABLE
     register_crypto_status();
@@ -512,7 +589,6 @@ void console_init() {
     ESP_ERROR_CHECK(esp_console_new_repl_usb_serial_jtag(&hw_config, &repl_config, &repl));
 #endif
 
-    use_printf = true;
     ESP_ERROR_CHECK(esp_console_start_repl(repl));
 }
 
