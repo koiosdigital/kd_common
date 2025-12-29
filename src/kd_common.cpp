@@ -49,6 +49,10 @@ void kd_common_reverse_bytes(uint8_t* data, size_t len) {
 bool kd_common_ota_has_completed_boot_check() {
     return ota_has_completed_boot_check();
 }
+
+void kd_common_check_ota() {
+    ota_check_now();
+}
 #endif
 
 #ifndef KD_COMMON_CRYPTO_DISABLE

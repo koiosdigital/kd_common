@@ -1,7 +1,7 @@
 #pragma once
 
-#include <freertos/FreeRTOS.h>
-#include <freertos/task.h>
-
-TaskHandle_t provisioning_get_task_handle();
+// Initialize provisioning (registers event handlers, checks if already provisioned)
 void provisioning_init();
+
+// Start BLE provisioning manually (e.g., for button-triggered re-provisioning)
+void provisioning_start();

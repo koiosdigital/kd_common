@@ -6,3 +6,4 @@
 
 void ota_init();
 bool ota_has_completed_boot_check();
+void ota_check_now();  // Trigger manual OTA check

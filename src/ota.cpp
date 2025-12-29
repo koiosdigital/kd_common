@@ -1,19 +1,23 @@
+// OTA - Event-driven firmware update checking with esp_timer
 #include "ota.h"
 
-#include "esp_https_ota.h"
-#include "esp_http_client.h"
-#include "esp_crt_bundle.h"
-#include "esp_log.h"
-#include "esp_app_format.h"
-#include "esp_wifi.h"
+#include <esp_https_ota.h>
+#include <esp_http_client.h>
+#include <esp_crt_bundle.h>
+#include <esp_log.h>
+#include <esp_app_format.h>
+#include <esp_timer.h>
+#include <esp_event.h>
+#include <esp_netif.h>
 
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 
-#include "cJSON.h"
+#include <cJSON.h>
 #include "kd_common.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cstring>
 #include <memory>
 
@@ -21,19 +25,30 @@ static const char* TAG = "kd_ota";
 
 namespace {
 
+//------------------------------------------------------------------------------
 // Configuration
-constexpr uint32_t CHECK_INTERVAL_MS = 12 * 60 * 60 * 1000;  // 12 hours
+//------------------------------------------------------------------------------
+
+constexpr int64_t CHECK_INTERVAL_US = 12LL * 60 * 60 * 1000 * 1000;  // 12 hours in microseconds
 constexpr uint32_t RETRY_DELAY_MS = 5000;
-constexpr uint32_t WIFI_WAIT_MS = 1000;
 constexpr size_t RESPONSE_BUFFER_SIZE = 512;
 constexpr size_t OTA_BUFFER_SIZE = 4096;
+constexpr size_t OTA_TASK_STACK_SIZE = 8192;
+constexpr UBaseType_t OTA_TASK_PRIORITY = 5;
 
+//------------------------------------------------------------------------------
 // State
-TaskHandle_t task_handle = nullptr;
-bool boot_check_completed = false;
-bool task_running = false;
+//------------------------------------------------------------------------------
 
-// RAII wrapper for cJSON
+std::atomic<bool> boot_check_completed{false};
+std::atomic<bool> boot_check_pending{true};
+std::atomic<bool> check_in_progress{false};
+esp_timer_handle_t periodic_timer = nullptr;
+
+//------------------------------------------------------------------------------
+// RAII Helpers (unchanged from original)
+//------------------------------------------------------------------------------
+
 struct JsonDeleter {
     void operator()(cJSON* json) const {
         if (json) cJSON_Delete(json);
@@ -41,7 +56,6 @@ struct JsonDeleter {
 };
 using JsonPtr = std::unique_ptr<cJSON, JsonDeleter>;
 
-// RAII wrapper for HTTP client
 class HttpClient {
 public:
     explicit HttpClient(const esp_http_client_config_t* config)
@@ -57,7 +71,6 @@ public:
     HttpClient& operator=(const HttpClient&) = delete;
 
     explicit operator bool() const { return handle_ != nullptr; }
-    esp_http_client_handle_t get() const { return handle_; }
 
     esp_err_t set_header(const char* key, const char* value) {
         return esp_http_client_set_header(handle_, key, value);
@@ -75,7 +88,6 @@ private:
     esp_http_client_handle_t handle_;
 };
 
-// Response buffer with automatic reset
 struct ResponseBuffer {
     char data[RESPONSE_BUFFER_SIZE] = {};
     size_t len = 0;
@@ -95,6 +107,10 @@ struct ResponseBuffer {
         }
     }
 };
+
+//------------------------------------------------------------------------------
+// HTTP Event Handler
+//------------------------------------------------------------------------------
 
 esp_err_t http_event_handler(esp_http_client_event_t* evt) {
     if (!evt || !evt->user_data) {
@@ -119,7 +135,10 @@ esp_err_t http_event_handler(esp_http_client_event_t* evt) {
     return ESP_OK;
 }
 
-// Check result enumeration
+//------------------------------------------------------------------------------
+// Update Check Logic
+//------------------------------------------------------------------------------
+
 enum class CheckResult {
     Success,
     UpdateAvailable,
@@ -210,19 +229,16 @@ bool perform_update_check() {
     const char* ota_url = nullptr;
     CheckResult result = check_for_update(&ota_url);
 
-    // Ensure cleanup of URL on all exit paths
     auto url_cleanup = [](const char* p) { if (p) free(const_cast<char*>(p)); };
     std::unique_ptr<const char, decltype(url_cleanup)> url_guard(ota_url, url_cleanup);
 
     switch (result) {
     case CheckResult::Success:
         ESP_LOGI(TAG, "Up to date");
-        boot_check_completed = true;
         return true;
 
     case CheckResult::UpdateAvailable:
         ESP_LOGI(TAG, "Update available");
-        boot_check_completed = true;
         perform_ota_update(ota_url);
         return true;
 
@@ -234,46 +250,106 @@ bool perform_update_check() {
     return false;
 }
 
-void ota_task_func(void*) {
-    // Initial boot check - retry until successful
-    while (!boot_check_completed) {
-        if (!kd_common_is_wifi_connected()) {
-            vTaskDelay(pdMS_TO_TICKS(WIFI_WAIT_MS));
-            continue;
-        }
+//------------------------------------------------------------------------------
+// One-shot Check Task (spawned on demand, self-deletes)
+//------------------------------------------------------------------------------
 
-        if (perform_update_check()) {
-            break;
-        }
+void ota_check_task(void* arg) {
+    bool is_boot_check = reinterpret_cast<uintptr_t>(arg) != 0;
 
-        vTaskDelay(pdMS_TO_TICKS(RETRY_DELAY_MS));
+    bool success = perform_update_check();
+
+    if (is_boot_check) {
+        if (success) {
+            boot_check_completed.store(true);
+            boot_check_pending.store(false);
+
+            // Start periodic timer now that boot check is done
+            if (periodic_timer) {
+                esp_timer_start_periodic(periodic_timer, CHECK_INTERVAL_US);
+                ESP_LOGI(TAG, "Started periodic update timer (12h)");
+            }
+        } else {
+            // Boot check failed - will retry on next IP event
+            ESP_LOGW(TAG, "Boot check failed, will retry on reconnect");
+        }
     }
 
-    // Periodic checks
-    while (true) {
-        vTaskDelay(pdMS_TO_TICKS(CHECK_INTERVAL_MS));
+    check_in_progress.store(false);
+    vTaskDelete(nullptr);  // Self-delete
+}
 
-        if (kd_common_is_wifi_connected()) {
-            perform_update_check();
+void spawn_check_task(bool is_boot_check) {
+    if (check_in_progress.exchange(true)) {
+        return;  // Already running
+    }
+
+    uintptr_t arg = is_boot_check ? 1 : 0;
+
+    if (xTaskCreate(ota_check_task, "ota_check", OTA_TASK_STACK_SIZE,
+                    reinterpret_cast<void*>(arg), OTA_TASK_PRIORITY, nullptr) != pdPASS) {
+        ESP_LOGE(TAG, "Failed to create OTA check task");
+        check_in_progress.store(false);
+    }
+}
+
+//------------------------------------------------------------------------------
+// Timer Callback
+//------------------------------------------------------------------------------
+
+void timer_callback(void*) {
+    if (kd_common_is_wifi_connected()) {
+        spawn_check_task(false);  // Not a boot check
+    }
+}
+
+//------------------------------------------------------------------------------
+// IP Event Handler
+//------------------------------------------------------------------------------
+
+void ip_event_handler(void*, esp_event_base_t, int32_t event_id, void*) {
+    if (event_id == IP_EVENT_STA_GOT_IP) {
+        if (boot_check_pending.load()) {
+            ESP_LOGI(TAG, "Got IP, starting boot check");
+            spawn_check_task(true);  // Boot check
         }
     }
 }
 
 }  // namespace
 
+//------------------------------------------------------------------------------
+// Public API
+//------------------------------------------------------------------------------
+
 void ota_init() {
-    if (task_running) {
-        return;
+    // Create periodic timer (initially stopped)
+    esp_timer_create_args_t timer_args = {
+        .callback = timer_callback,
+        .arg = nullptr,
+        .dispatch_method = ESP_TIMER_TASK,
+        .name = "ota_periodic",
+        .skip_unhandled_events = true,
+    };
+
+    esp_err_t err = esp_timer_create(&timer_args, &periodic_timer);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to create timer: %s", esp_err_to_name(err));
     }
 
-    task_running = true;
+    // Register for IP events to trigger boot check
+    esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP,
+                               ip_event_handler, nullptr);
 
-    if (xTaskCreate(ota_task_func, "ota", 8192, nullptr, 5, &task_handle) != pdPASS) {
-        ESP_LOGE(TAG, "Failed to create task");
-        task_running = false;
-    }
+    ESP_LOGI(TAG, "Initialized (event-driven)");
 }
 
 bool ota_has_completed_boot_check() {
-    return boot_check_completed;
+    return boot_check_completed.load();
+}
+
+void ota_check_now() {
+    if (kd_common_is_wifi_connected()) {
+        spawn_check_task(false);
+    }
 }
