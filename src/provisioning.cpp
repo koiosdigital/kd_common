@@ -17,113 +17,109 @@ static const char* TAG = "kd_ble_prov";
 
 namespace {
 
-struct ProvisioningState {
-    bool ever_connected = false;
-    bool provisioning_started = false;
-    bool is_wifi_connected = false;
-    bool prov_cred_failed = false;
-    ProvisioningPOPTokenFormat_t pop_format = ProvisioningPOPTokenFormat_t::NONE;
-    char* qr_payload = nullptr;
-    char* pop_token = nullptr;
-};
-
-ProvisioningState state;
-
-void start_provisioning_internal() {
-    if (state.provisioning_started) {
-        ESP_LOGD(TAG, "Provisioning already started");
-        return;
-    }
-
-    wifi_prov_mgr_config_t config = {
-        .scheme = wifi_prov_scheme_ble,
-        .scheme_event_handler = WIFI_PROV_SCHEME_BLE_EVENT_HANDLER_FREE_BTDM,
-        .app_event_handler = {
-            .event_cb = nullptr,
-            .user_data = nullptr,
-        },
+    struct ProvisioningState {
+        bool ever_connected = false;
+        bool provisioning_started = false;
+        bool is_wifi_connected = false;
+        bool prov_cred_failed = false;
+        ProvisioningPOPTokenFormat_t pop_format = ProvisioningPOPTokenFormat_t::NONE;
+        char* qr_payload = nullptr;
+        char* pop_token = nullptr;
     };
 
-    esp_err_t ret = wifi_prov_mgr_init(config);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to init prov mgr: %s", esp_err_to_name(ret));
-        return;
-    }
+    ProvisioningState state;
+
+    void start_provisioning_internal() {
+        if (state.provisioning_started) {
+            ESP_LOGD(TAG, "Provisioning already started");
+            return;
+        }
+
+        wifi_prov_mgr_config_t config = {
+            .scheme = wifi_prov_scheme_ble,
+            .scheme_event_handler = WIFI_PROV_SCHEME_BLE_EVENT_HANDLER_FREE_BTDM,
+            .app_event_handler = {
+                .event_cb = nullptr,
+                .user_data = nullptr,
+            },
+            .wifi_prov_conn_cfg = {
+                .wifi_conn_attempts = 3,
+            },
+        };
+
+        esp_err_t ret = wifi_prov_mgr_init(config);
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to init prov mgr: %s", esp_err_to_name(ret));
+            return;
+        }
 
 #ifndef KD_COMMON_CONSOLE_DISABLE
-    ret = wifi_prov_mgr_endpoint_create(BLE_CONSOLE_ENDPOINT_NAME);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to create endpoint: %s", esp_err_to_name(ret));
-        wifi_prov_mgr_deinit();
-        return;
-    }
+        ret = wifi_prov_mgr_endpoint_create(BLE_CONSOLE_ENDPOINT_NAME);
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to create endpoint: %s", esp_err_to_name(ret));
+            wifi_prov_mgr_deinit();
+            return;
+        }
 #endif
 
-    char* pop = kd_common_provisioning_get_pop_token();
-    wifi_prov_security_t security = pop ? WIFI_PROV_SECURITY_1 : WIFI_PROV_SECURITY_0;
+        char* pop = kd_common_provisioning_get_pop_token();
+        wifi_prov_security_t security = pop ? WIFI_PROV_SECURITY_1 : WIFI_PROV_SECURITY_0;
 
-    ret = wifi_prov_mgr_start_provisioning(security, pop, kd_common_get_device_name(), nullptr);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to start prov: %s", esp_err_to_name(ret));
-        wifi_prov_mgr_deinit();
-        return;
-    }
+        ret = wifi_prov_mgr_start_provisioning(security, pop, kd_common_get_device_name(), nullptr);
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to start prov: %s", esp_err_to_name(ret));
+            wifi_prov_mgr_deinit();
+            return;
+        }
 
 #ifndef KD_COMMON_CONSOLE_DISABLE
-    ret = wifi_prov_mgr_endpoint_register(BLE_CONSOLE_ENDPOINT_NAME, ble_console_endpoint, nullptr);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to register endpoint: %s", esp_err_to_name(ret));
-    }
+        ret = wifi_prov_mgr_endpoint_register(BLE_CONSOLE_ENDPOINT_NAME, ble_console_endpoint, nullptr);
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to register endpoint: %s", esp_err_to_name(ret));
+        }
 #endif
 
-    state.provisioning_started = true;
-    ESP_LOGI(TAG, "BLE provisioning started");
-}
+        state.provisioning_started = true;
+        ESP_LOGI(TAG, "BLE provisioning started");
+    }
 
-void provisioning_event_handler(void* arg, esp_event_base_t event_base,
-                                 int32_t event_id, void* event_data) {
-    if (event_base == WIFI_EVENT) {
-        switch (event_id) {
-        case WIFI_EVENT_STA_START:
-            // WiFi started - connect if we have credentials
-            esp_wifi_connect();
-            break;
-
-        case WIFI_EVENT_STA_DISCONNECTED:
+    void provisioning_event_handler(void* arg, esp_event_base_t event_base,
+        int32_t event_id, void* event_data) {
+        if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
             state.is_wifi_connected = false;
-            // Only reconnect if not waiting for new provisioning credentials
+            // Reconnect unless waiting for new provisioning credentials
             if (!state.prov_cred_failed) {
                 esp_wifi_connect();
             }
-            break;
         }
-    } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
-        state.ever_connected = true;
-        state.is_wifi_connected = true;
-        state.prov_cred_failed = false;
-        // Provisioning will auto-stop via WIFI_PROV_END event
-
-    } else if (event_base == WIFI_PROV_EVENT) {
-        switch (event_id) {
-        case WIFI_PROV_CRED_RECV:
+        else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
+            state.ever_connected = true;
+            state.is_wifi_connected = true;
             state.prov_cred_failed = false;
-            ESP_LOGI(TAG, "Credentials received");
-            break;
+            // Provisioning will auto-stop via WIFI_PROV_END event
 
-        case WIFI_PROV_CRED_FAIL:
-            state.prov_cred_failed = true;
-            ESP_LOGW(TAG, "Credentials failed");
-            wifi_prov_mgr_reset_sm_state_on_failure();
-            break;
+        }
+        else if (event_base == WIFI_PROV_EVENT) {
+            switch (event_id) {
+            case WIFI_PROV_CRED_RECV:
+                state.prov_cred_failed = false;
+                ESP_LOGI(TAG, "Credentials received");
+                break;
 
-        case WIFI_PROV_END:
-            ESP_LOGI(TAG, "Provisioning ended");
-            wifi_prov_mgr_deinit();  // This frees BT memory via scheme handler
-            state.provisioning_started = false;
-            break;
+            case WIFI_PROV_CRED_FAIL:
+                state.prov_cred_failed = true;
+                ESP_LOGW(TAG, "Credentials failed");
+                wifi_prov_mgr_reset_sm_state_on_failure();
+                break;
+
+            case WIFI_PROV_END:
+                ESP_LOGI(TAG, "Provisioning ended");
+                wifi_prov_mgr_deinit();  // This frees BT memory via scheme handler
+                state.provisioning_started = false;
+                break;
+            }
         }
     }
-}
 
 }  // namespace
 
@@ -188,13 +184,12 @@ void kd_common_start_provisioning() {
 void provisioning_init() {
     ESP_LOGI(TAG, "Initializing");
 
-    // Register event handlers FIRST
+    // Register event handlers for WiFi state management
     esp_event_handler_register(WIFI_PROV_EVENT, ESP_EVENT_ANY_ID, &provisioning_event_handler, nullptr);
-    esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_STA_START, &provisioning_event_handler, nullptr);
     esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_STA_DISCONNECTED, &provisioning_event_handler, nullptr);
     esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &provisioning_event_handler, nullptr);
 
-    // Check if already provisioned
+    // Check if already provisioned (requires wifi to be initialized)
     bool provisioned = false;
     wifi_prov_mgr_is_provisioned(&provisioned);
 

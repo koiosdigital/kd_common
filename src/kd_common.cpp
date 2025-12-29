@@ -29,8 +29,8 @@ void kd_common_init() {
     crypto_init();
 #endif
 
-    provisioning_init();
-    wifi_init();
+    wifi_init();         // Start WiFi and connect
+    provisioning_init(); // Check provisioned state, start BLE if needed
 
 #ifdef ENABLE_OTA
     ota_init();
