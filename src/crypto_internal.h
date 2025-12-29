@@ -23,7 +23,7 @@ constexpr const char* NVS_KEY_CLAIM_TOKEN = "claim_token";
 
 constexpr esp_efuse_block_t DS_KEY_BLOCK = EFUSE_BLK_KEY5;
 constexpr size_t KEY_SIZE = 4096;
-constexpr size_t PEM_BUFFER_SIZE = 4096;
+constexpr size_t PEM_BUFFER_SIZE = 12288;  // 12KB for fullchain (leaf + intermediates)
 
 // Global keygen mutex (defined in crypto.cpp)
 extern SemaphoreHandle_t keygen_mutex;

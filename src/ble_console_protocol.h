@@ -9,7 +9,7 @@
 #define BLE_CONSOLE_FRAME_HEADER_SIZE 6   // magic + total_len(2) + chunk_idx + chunk_len(2)
 #define BLE_CONSOLE_FRAME_TRAILER_SIZE 2  // crc16(2)
 #define BLE_CONSOLE_CHUNK_PAYLOAD_SIZE (BLE_CONSOLE_MTU - BLE_CONSOLE_FRAME_HEADER_SIZE - BLE_CONSOLE_FRAME_TRAILER_SIZE) // 504 bytes
-#define BLE_CONSOLE_MAX_PAYLOAD 4096
+#define BLE_CONSOLE_MAX_PAYLOAD 16384  // 16KB for fullchain certs
 
 // Frame magic byte for data frames
 #define BLE_FRAME_MAGIC 0xA5

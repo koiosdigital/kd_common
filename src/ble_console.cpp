@@ -7,6 +7,7 @@
 
 #include <esp_log.h>
 #include <esp_system.h>
+#include <esp_heap_caps.h>
 
 #include "kd/v1/console.pb-c.h"
 #include "kd/v1/common.pb-c.h"
@@ -18,7 +19,7 @@
 static const char* TAG = "ble_console";
 
 
-static constexpr size_t BLE_CONSOLE_PEM_BUFFER_SIZE = 4096;
+static constexpr size_t BLE_CONSOLE_PEM_BUFFER_SIZE = 12288;  // 12KB for fullchain
 
 static uint8_t crypto_retry_count = 0;
 static constexpr uint8_t CRYPTO_MAX_RETRIES = 3;
@@ -99,7 +100,7 @@ static void handle_request(const Kd__V1__ConsoleMessage* req) {
         get_csr_resp.csr_pem.data = NULL;
         get_csr_resp.csr_pem.len = 0;
 
-        uint8_t* csr_buf = (uint8_t*)malloc(BLE_CONSOLE_PEM_BUFFER_SIZE);
+        uint8_t* csr_buf = (uint8_t*)heap_caps_malloc(BLE_CONSOLE_PEM_BUFFER_SIZE, MALLOC_CAP_SPIRAM);
         if (csr_buf == NULL) {
             result.error_code = ESP_ERR_NO_MEM;
             result.detail = (char*)"no mem";
@@ -121,7 +122,7 @@ static void handle_request(const Kd__V1__ConsoleMessage* req) {
         resp.payload_case = KD__V1__CONSOLE_MESSAGE__PAYLOAD_GET_CSR_RESPONSE;
         resp.get_csr_response = &get_csr_resp;
         prepare_response(&resp);
-        free(csr_buf);
+        heap_caps_free(csr_buf);
         break;
     }
 
@@ -153,30 +154,6 @@ static void handle_request(const Kd__V1__ConsoleMessage* req) {
         break;
     }
 
-    case KD__V1__CONSOLE_MESSAGE__PAYLOAD_CLEAR_DEVICE_CERT_REQUEST: {
-        Kd__V1__CommandResult result = KD__V1__COMMAND_RESULT__INIT;
-        result.success = false;
-        result.error_code = 0;
-        result.detail = (char*)"failed";
-
-        esp_err_t err = kd_common_clear_device_cert();
-        if (err == ESP_OK) {
-            result.success = true;
-            result.detail = (char*)"ok";
-        } else {
-            result.error_code = err;
-        }
-
-        Kd__V1__ClearDeviceCertResponse clear_resp = KD__V1__CLEAR_DEVICE_CERT_RESPONSE__INIT;
-        clear_resp.result = &result;
-
-        Kd__V1__ConsoleMessage resp = KD__V1__CONSOLE_MESSAGE__INIT;
-        resp.payload_case = KD__V1__CONSOLE_MESSAGE__PAYLOAD_CLEAR_DEVICE_CERT_RESPONSE;
-        resp.clear_device_cert_response = &clear_resp;
-        prepare_response(&resp);
-        break;
-    }
-
     case KD__V1__CONSOLE_MESSAGE__PAYLOAD_GET_DEVICE_CERT_REQUEST: {
         Kd__V1__CommandResult result = KD__V1__COMMAND_RESULT__INIT;
         result.success = false;
@@ -187,7 +164,7 @@ static void handle_request(const Kd__V1__ConsoleMessage* req) {
         get_cert_resp.cert_pem.data = NULL;
         get_cert_resp.cert_pem.len = 0;
 
-        uint8_t* cert_buf = (uint8_t*)malloc(BLE_CONSOLE_PEM_BUFFER_SIZE);
+        uint8_t* cert_buf = (uint8_t*)heap_caps_malloc(BLE_CONSOLE_PEM_BUFFER_SIZE, MALLOC_CAP_SPIRAM);
         if (cert_buf == NULL) {
             result.error_code = ESP_ERR_NO_MEM;
             result.detail = (char*)"no mem";
@@ -209,7 +186,7 @@ static void handle_request(const Kd__V1__ConsoleMessage* req) {
         resp.payload_case = KD__V1__CONSOLE_MESSAGE__PAYLOAD_GET_DEVICE_CERT_RESPONSE;
         resp.get_device_cert_response = &get_cert_resp;
         prepare_response(&resp);
-        free(cert_buf);
+        heap_caps_free(cert_buf);
         break;
     }
 
