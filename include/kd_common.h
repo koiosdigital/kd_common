@@ -38,6 +38,8 @@ void kd_common_reverse_bytes(uint8_t* data, size_t len);
 #ifndef KD_COMMON_CRYPTO_DISABLE
 esp_ds_data_ctx_t* kd_common_crypto_get_ctx();
 esp_err_t kd_common_get_device_cert(char* buffer, size_t* len);
+esp_err_t kd_common_set_device_cert(const char* cert, size_t len);
+esp_err_t kd_common_get_csr(char* buffer, size_t* len);
 esp_err_t kd_common_get_claim_token(char* buffer, size_t* len);
 esp_err_t kd_common_clear_claim_token();
 

@@ -43,6 +43,8 @@ constexpr UBaseType_t OTA_TASK_PRIORITY = 5;
 std::atomic<bool> boot_check_completed{false};
 std::atomic<bool> boot_check_pending{true};
 std::atomic<bool> check_in_progress{false};
+std::atomic<int> boot_check_retries{0};
+constexpr int MAX_BOOT_CHECK_RETRIES = 3;
 esp_timer_handle_t periodic_timer = nullptr;
 
 //------------------------------------------------------------------------------
@@ -270,8 +272,22 @@ void ota_check_task(void* arg) {
                 ESP_LOGI(TAG, "Started periodic update timer (12h)");
             }
         } else {
-            // Boot check failed - will retry on next IP event
-            ESP_LOGW(TAG, "Boot check failed, will retry on reconnect");
+            int retries = boot_check_retries.fetch_add(1) + 1;
+            if (retries >= MAX_BOOT_CHECK_RETRIES) {
+                // Give up after max retries, allow normal execution to proceed
+                ESP_LOGW(TAG, "Boot check failed after %d retries, giving up", retries);
+                boot_check_completed.store(true);
+                boot_check_pending.store(false);
+
+                // Start periodic timer anyway
+                if (periodic_timer) {
+                    esp_timer_start_periodic(periodic_timer, CHECK_INTERVAL_US);
+                    ESP_LOGI(TAG, "Started periodic update timer (12h)");
+                }
+            } else {
+                ESP_LOGW(TAG, "Boot check failed (attempt %d/%d), will retry",
+                         retries, MAX_BOOT_CHECK_RETRIES);
+            }
         }
     }
 

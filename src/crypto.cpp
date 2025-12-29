@@ -61,6 +61,14 @@ esp_err_t kd_common_get_device_cert(char* buffer, size_t* len) {
     return crypto_storage_get_device_cert(buffer, len);
 }
 
+esp_err_t kd_common_set_device_cert(const char* cert, size_t len) {
+    return crypto_storage_set_device_cert(cert, len);
+}
+
+esp_err_t kd_common_get_csr(char* buffer, size_t* len) {
+    return crypto_storage_get_csr(buffer, len);
+}
+
 esp_err_t kd_common_clear_device_cert() {
     return crypto_storage_clear_device_cert();
 }

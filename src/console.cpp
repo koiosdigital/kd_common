@@ -302,6 +302,49 @@ static void register_set_device_cert(void)
 }
 #endif // KD_COMMON_CRYPTO_DISABLE
 
+#ifndef KD_COMMON_CRYPTO_DISABLE
+static int get_device_cert(int argc, char** argv)
+{
+    // Get cert length first
+    size_t cert_len = 0;
+    esp_err_t err = kd_common_get_device_cert(nullptr, &cert_len);
+    if (err != ESP_OK || cert_len == 0) {
+        console_out("{\"error\":true,\"message\":\"No device certificate found\"}\n");
+        return 1;
+    }
+
+    // Allocate and get cert
+    char* cert = (char*)heap_caps_malloc(cert_len + 1, MALLOC_CAP_SPIRAM);
+    if (!cert) {
+        console_out("{\"error\":true,\"message\":\"Memory allocation failed\"}\n");
+        return 1;
+    }
+
+    err = kd_common_get_device_cert(cert, &cert_len);
+    if (err != ESP_OK) {
+        heap_caps_free(cert);
+        console_out("{\"error\":true,\"message\":\"Failed to read certificate\"}\n");
+        return 1;
+    }
+    cert[cert_len] = '\0';
+
+    console_out("%s\n", cert);
+    heap_caps_free(cert);
+    return 0;
+}
+
+static void register_get_device_cert(void)
+{
+    const esp_console_cmd_t cmd = {
+        .command = "get_device_cert",
+        .help = "Get device certificate",
+        .hint = NULL,
+        .func = &get_device_cert,
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&cmd));
+}
+#endif // KD_COMMON_CRYPTO_DISABLE
+
 static int assert_crash(int argc, char** argv)
 {
     console_out("Triggering system crash...\n");
@@ -387,6 +430,7 @@ void console_init() {
     register_crypto_status();
     register_get_csr();
     register_set_device_cert();
+    register_get_device_cert();
 #endif
 
     register_assert();

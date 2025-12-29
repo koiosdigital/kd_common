@@ -26,10 +26,12 @@ esp_err_t crypto_storage_get_csr(char* buffer, size_t* len) {
         return nvs.open_error();
     }
 
-    if (buffer == nullptr) {
+    // If both buffer and len are nullptr, just check if key exists
+    if (buffer == nullptr && len == nullptr) {
         return nvs.find_key(NVS_KEY_CSR);
     }
 
+    // nvs_get_blob with nullptr buffer returns the required size in len
     esp_err_t err = nvs.get_blob(NVS_KEY_CSR, buffer, len);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "nvs get csr failed: %s", esp_err_to_name(err));
@@ -89,10 +91,12 @@ esp_err_t crypto_storage_get_device_cert(char* buffer, size_t* len) {
         return nvs.open_error();
     }
 
-    if (buffer == nullptr) {
+    // If both buffer and len are nullptr, just check if key exists
+    if (buffer == nullptr && len == nullptr) {
         return nvs.find_key(NVS_KEY_DEVICE_CERT);
     }
 
+    // nvs_get_blob with nullptr buffer returns the required size in len
     return nvs.get_blob(NVS_KEY_DEVICE_CERT, buffer, len);
 }
 
@@ -145,10 +149,12 @@ esp_err_t crypto_storage_get_claim_token(char* buffer, size_t* len) {
         return nvs.open_error();
     }
 
-    if (buffer == nullptr) {
+    // If both buffer and len are nullptr, just check if key exists
+    if (buffer == nullptr && len == nullptr) {
         return nvs.find_key(NVS_KEY_CLAIM_TOKEN);
     }
 
+    // nvs_get_blob with nullptr buffer returns the required size in len
     esp_err_t err = nvs.get_blob(NVS_KEY_CLAIM_TOKEN, buffer, len);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "nvs get claim token failed: %s", esp_err_to_name(err));

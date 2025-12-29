@@ -21,7 +21,7 @@ constexpr const char* NVS_KEY_RSA_LEN = "rsa_len";
 constexpr const char* NVS_KEY_CSR = "csr";
 constexpr const char* NVS_KEY_CLAIM_TOKEN = "claim_token";
 
-constexpr esp_efuse_block_t DS_KEY_BLOCK = EFUSE_BLK_KEY5;
+constexpr esp_efuse_block_t DS_KEY_BLOCK = EFUSE_BLK_KEY3;
 constexpr size_t KEY_SIZE = 4096;
 constexpr size_t PEM_BUFFER_SIZE = 12288;  // 12KB for fullchain (leaf + intermediates)
 

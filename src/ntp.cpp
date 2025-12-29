@@ -15,7 +15,7 @@
 
 #include "embedded_tz_db.h"
 
-#define NTP_NVS_NAMESPACE "ntp_cfg"
+#define NTP_NVS_NAMESPACE "ntp_cfg2"  // Bumped to invalidate old struct layout
 #define TIME_INFO_URL "https://firmware.api.koiosdigital.net/tz"
 
 static const char* TAG = "ntp";
@@ -236,6 +236,17 @@ void wifi_event_handler(void*, esp_event_base_t base, int32_t id, void*) {
 void ntp_init() {
     if (g_initialized) return;
     g_initialized = true;
+
+    // TODO: Remove after deployment - clear old NVS config due to struct layout change
+    {
+        nvs_handle_t h;
+        if (nvs_open("ntp_cfg", NVS_READWRITE, &h) == ESP_OK) {
+            nvs_erase_all(h);
+            nvs_commit(h);
+            nvs_close(h);
+            ESP_LOGW(TAG, "Cleared old NVS config");
+        }
+    }
 
     // Load configuration from NVS
     load_config_from_nvs();
