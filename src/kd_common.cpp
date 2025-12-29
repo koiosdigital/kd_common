@@ -8,6 +8,7 @@
 #include "provisioning.h"
 #include "wifi.h"
 #include "ota.h"
+#include "ntp.h"
 
 static const char* TAG = "kd_common";
 
@@ -31,6 +32,7 @@ void kd_common_init() {
 
     wifi_init();         // Start WiFi and connect
     provisioning_init(); // Check provisioned state, start BLE if needed
+    ntp_init();          // Start NTP when WiFi connects
 
 #ifdef ENABLE_OTA
     ota_init();
@@ -60,3 +62,43 @@ bool kd_common_crypto_will_generate_key() {
     return crypto_will_generate_key();
 }
 #endif
+
+bool kd_common_ntp_is_synced() {
+    return ntp_is_synced();
+}
+
+void kd_common_ntp_sync() {
+    ntp_sync();
+}
+
+void kd_common_set_auto_timezone(bool enabled) {
+    ntp_set_auto_timezone(enabled);
+}
+
+bool kd_common_get_auto_timezone() {
+    return ntp_get_auto_timezone();
+}
+
+void kd_common_set_fetch_tz_on_boot(bool enabled) {
+    ntp_set_fetch_tz_on_boot(enabled);
+}
+
+bool kd_common_get_fetch_tz_on_boot() {
+    return ntp_get_fetch_tz_on_boot();
+}
+
+void kd_common_set_timezone(const char* timezone) {
+    ntp_set_timezone(timezone);
+}
+
+const char* kd_common_get_timezone() {
+    return ntp_get_timezone();
+}
+
+void kd_common_set_ntp_server(const char* server) {
+    ntp_set_server(server);
+}
+
+const char* kd_common_get_ntp_server() {
+    return ntp_get_server();
+}
