@@ -9,6 +9,7 @@
 #include "wifi.h"
 #include "ota.h"
 #include "ntp.h"
+#include "embedded_tz_db.h"
 
 static const char* TAG = "kd_common";
 
@@ -101,4 +102,13 @@ void kd_common_set_ntp_server(const char* server) {
 
 const char* kd_common_get_ntp_server() {
     return ntp_get_server();
+}
+
+const kd_common_tz_entry_t* kd_common_get_all_timezones() {
+    // The struct layouts are identical (name, rule pointers), safe to cast
+    return reinterpret_cast<const kd_common_tz_entry_t*>(tz_db_get_all_zones());
+}
+
+int kd_common_get_timezone_count() {
+    return TZ_DB_NUM_ZONES;
 }

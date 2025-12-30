@@ -86,3 +86,12 @@ void kd_common_set_timezone(const char* timezone);  // IANA name like "America/N
 const char* kd_common_get_timezone();
 void kd_common_set_ntp_server(const char* server);
 const char* kd_common_get_ntp_server();
+
+// Timezone database access (for API endpoints)
+typedef struct {
+    const char* name;
+    const char* rule;
+} kd_common_tz_entry_t;
+
+const kd_common_tz_entry_t* kd_common_get_all_timezones();
+int kd_common_get_timezone_count();
