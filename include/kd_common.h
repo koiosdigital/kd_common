@@ -45,6 +45,7 @@ esp_err_t kd_common_clear_claim_token();
 
 CryptoState_t kd_common_crypto_get_state();
 bool kd_common_crypto_will_generate_key();
+esp_err_t kd_common_crypto_test_ds_signing();  // Debug: test DS peripheral signing
 #endif
 
 char* kd_common_get_device_name();
