@@ -22,6 +22,7 @@
 
 #include "kd_common.h"
 #include "crypto.h"
+#include <esp_efuse.h>
 
 #if SOC_USB_SERIAL_JTAG_SUPPORTED
 #if !CONFIG_ESP_CONSOLE_SECONDARY_NONE
@@ -345,6 +346,164 @@ static void register_get_device_cert(void)
     };
     ESP_ERROR_CHECK(esp_console_cmd_register(&cmd));
 }
+
+static int get_ds_params(int argc, char** argv)
+{
+    char* json = crypto_get_ds_params_json();
+    if (json == nullptr) {
+        console_out("{\"error\":true,\"message\":\"No DS params found\"}\n");
+        return 1;
+    }
+    console_out("%s\n", json);
+    heap_caps_free(json);
+    return 0;
+}
+
+static void register_get_ds_params(void)
+{
+    const esp_console_cmd_t cmd = {
+        .command = "get_ds_params",
+        .help = "Get digital signature parameters (ds_key_id, rsa_len, cipher_c, iv)",
+        .hint = NULL,
+        .func = &get_ds_params,
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&cmd));
+}
+
+static struct {
+    struct arg_int* block;
+    struct arg_lit* confirm;
+    struct arg_end* end;
+} set_ds_key_block_args;
+
+static int set_ds_key_block(int argc, char** argv)
+{
+    int nerrors = arg_parse(argc, argv, (void**)&set_ds_key_block_args);
+    if (nerrors != 0) {
+        arg_print_errors(stderr, set_ds_key_block_args.end, argv[0]);
+        return 1;
+    }
+
+    int block = set_ds_key_block_args.block->ival[0];
+
+    // Validate range
+    if (block < 4 || block > 9) {
+        console_out("{\"error\":true,\"message\":\"Invalid block. Valid range: 4-9 (KEY0-KEY5)\"}\n");
+        return 1;
+    }
+
+    // Check for --confirm flag
+    if (set_ds_key_block_args.confirm->count == 0) {
+        console_out("\n");
+        console_out("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n");
+        console_out("!!                    CRITICAL WARNING                         !!\n");
+        console_out("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n");
+        console_out("\n");
+        console_out("This command will:\n");
+        console_out("  1. Change the DS key block to EFUSE_BLK_KEY%d\n", block - 4);
+        console_out("  2. PERMANENTLY DELETE all crypto data (CSR, certificate, DS params)\n");
+        console_out("  3. Reboot the device\n");
+        console_out("\n");
+        console_out("After reboot, the device will generate a NEW private key and burn\n");
+        console_out("it to the new eFuse block. This is IRREVERSIBLE.\n");
+        console_out("\n");
+        console_out("The device will need to be RE-PROVISIONED with a new certificate.\n");
+        console_out("The old certificate will NO LONGER WORK.\n");
+        console_out("\n");
+        console_out("If no valid HMAC key exists in the target block, this WILL\n");
+        console_out("render the device PERMANENTLY UNUSABLE for mTLS authentication.\n");
+        console_out("\n");
+        console_out("To proceed, run: set_ds_key_block %d --confirm\n", block);
+        console_out("\n");
+        return 1;
+    }
+
+    // Check if target block already has a burnt key
+    if (crypto_is_key_block_burnt(block)) {
+        console_out("\n");
+        console_out("WARNING: EFUSE_BLK_KEY%d already has a burnt key!\n", block - 4);
+        console_out("Purpose: %d\n", esp_efuse_get_key_purpose(static_cast<esp_efuse_block_t>(block)));
+        console_out("\n");
+        console_out("If this key was not burnt for DS/HMAC_DOWN_DIGITAL_SIGNATURE,\n");
+        console_out("the device will fail to generate a valid signing key.\n");
+        console_out("\n");
+    }
+
+    uint8_t current_block = crypto_get_ds_key_block();
+    console_out("Current DS key block: EFUSE_BLK_KEY%d (%d)\n", current_block - 4, current_block);
+    console_out("New DS key block: EFUSE_BLK_KEY%d (%d)\n", block - 4, block);
+
+    // Set the new block
+    esp_err_t err = crypto_set_ds_key_block(block);
+    if (err != ESP_OK) {
+        console_out("{\"error\":true,\"message\":\"Failed to set DS key block: %s\"}\n", esp_err_to_name(err));
+        return 1;
+    }
+
+    // Clear all crypto data
+    console_out("Clearing all crypto data...\n");
+    err = crypto_clear_all_data();
+    if (err != ESP_OK) {
+        console_out("{\"error\":true,\"message\":\"Failed to clear crypto data: %s\"}\n", esp_err_to_name(err));
+        return 1;
+    }
+
+    console_out("DS key block changed successfully. Rebooting in 2 seconds...\n");
+    vTaskDelay(pdMS_TO_TICKS(2000));
+    esp_restart();
+
+    return 0;  // Never reached
+}
+
+static void register_set_ds_key_block(void)
+{
+    set_ds_key_block_args.block = arg_int1(NULL, NULL, "<block>", "eFuse block number (4-9)");
+    set_ds_key_block_args.confirm = arg_lit0(NULL, "confirm", NULL);
+    set_ds_key_block_args.end = arg_end(2);
+
+    const esp_console_cmd_t cmd = {
+        .command = "set_ds_key_block",
+        .help = "Set the eFuse block for DS key storage (4-9 = KEY0-KEY5)",
+        .hint = NULL,
+        .func = &set_ds_key_block,
+        .argtable = &set_ds_key_block_args
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&cmd));
+}
+
+static int check_key_blocks(int argc, char** argv)
+{
+    uint8_t current_block = crypto_get_ds_key_block();
+
+    console_out("\neFuse Key Block Status:\n");
+    console_out("%-8s %-6s %s\n", "Block", "ID", "Status");
+    console_out("%-8s %-6s %s\n", "-----", "--", "------");
+
+    for (int block = DS_KEY_BLOCK_MIN; block <= DS_KEY_BLOCK_MAX; block++) {
+        bool is_burnt = crypto_is_key_block_burnt(block);
+        bool is_current = (block == current_block);
+
+        console_out("KEY%d     %-6d %s%s\n",
+            block - DS_KEY_BLOCK_MIN,
+            block,
+            is_burnt ? "BURNT" : "EMPTY",
+            is_current ? " <-- current" : "");
+    }
+
+    console_out("\n");
+    return 0;
+}
+
+static void register_check_key_blocks(void)
+{
+    const esp_console_cmd_t cmd = {
+        .command = "check_key_blocks",
+        .help = "Show status of all eFuse key blocks (KEY0-KEY5)",
+        .hint = NULL,
+        .func = &check_key_blocks,
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&cmd));
+}
 #endif // KD_COMMON_CRYPTO_DISABLE
 
 static int assert_crash(int argc, char** argv)
@@ -435,6 +594,9 @@ void console_init() {
     register_get_csr();
     register_set_device_cert();
     register_get_device_cert();
+    register_get_ds_params();
+    register_set_ds_key_block();
+    register_check_key_blocks();
 #endif
 
     register_assert();

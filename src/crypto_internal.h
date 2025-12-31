@@ -20,10 +20,13 @@ constexpr const char* NVS_KEY_DS_KEY_ID = "ds_key_id";
 constexpr const char* NVS_KEY_RSA_LEN = "rsa_len";
 constexpr const char* NVS_KEY_CSR = "csr";
 constexpr const char* NVS_KEY_CLAIM_TOKEN = "claim_token";
+constexpr const char* NVS_KEY_DS_KEY_BLOCK = "ds_key_blk";
 
-constexpr esp_efuse_block_t DS_KEY_BLOCK = EFUSE_BLK_KEY3;
 constexpr size_t KEY_SIZE = 4096;
 constexpr size_t PEM_BUFFER_SIZE = 12288;  // 12KB for fullchain (leaf + intermediates)
+
+// Get current DS key block (reads from NVS, defaults to EFUSE_BLK_KEY3)
+esp_efuse_block_t get_ds_key_block();
 
 // Global keygen mutex (defined in crypto.cpp)
 extern SemaphoreHandle_t keygen_mutex;

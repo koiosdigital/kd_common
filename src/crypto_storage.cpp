@@ -412,4 +412,94 @@ esp_err_t crypto_store_ds_params_json(char* params) {
     return err;
 }
 
+//MARK: DS Key Block Configuration
+
+esp_efuse_block_t crypto::get_ds_key_block() {
+    kd::NvsHandle nvs(NVS_NAMESPACE, NVS_READONLY);
+    if (!nvs) {
+        return EFUSE_BLK_KEY3;  // Default
+    }
+
+    uint8_t block = 0;
+    esp_err_t err = nvs.get_u8(NVS_KEY_DS_KEY_BLOCK, &block);
+    if (err != ESP_OK || block < 4 || block > 9) {
+        return EFUSE_BLK_KEY3;  // Default
+    }
+
+    return static_cast<esp_efuse_block_t>(block);
+}
+
+esp_err_t crypto_set_ds_key_block(uint8_t block) {
+    if (block < 4 || block > 9) {
+        ESP_LOGE(TAG, "Invalid DS key block: %d (valid range: 4-9)", block);
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    kd::NvsHandle nvs(crypto::NVS_NAMESPACE, NVS_READWRITE);
+    if (!nvs) {
+        ESP_LOGE(TAG, "nvs open failed: %s", esp_err_to_name(nvs.open_error()));
+        return nvs.open_error();
+    }
+
+    esp_err_t err = nvs.set_u8(crypto::NVS_KEY_DS_KEY_BLOCK, block);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "nvs set ds key block failed: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    err = nvs.commit();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "nvs commit failed: %s", esp_err_to_name(err));
+    }
+    return err;
+}
+
+uint8_t crypto_get_ds_key_block() {
+    return static_cast<uint8_t>(crypto::get_ds_key_block());
+}
+
+bool crypto_is_key_block_burnt(uint8_t block) {
+    if (block < 4 || block > 9) {
+        return false;
+    }
+    esp_efuse_block_t efuse_block = static_cast<esp_efuse_block_t>(block);
+    esp_efuse_purpose_t purpose = esp_efuse_get_key_purpose(efuse_block);
+    return purpose != ESP_EFUSE_KEY_PURPOSE_USER;
+}
+
+esp_err_t crypto_clear_all_data() {
+    esp_err_t err;
+
+    err = crypto_storage_clear_csr();
+    if (err != ESP_OK && err != ESP_ERR_NVS_NOT_FOUND) {
+        ESP_LOGW(TAG, "Failed to clear CSR: %s", esp_err_to_name(err));
+    }
+
+    err = crypto_storage_clear_device_cert();
+    if (err != ESP_OK && err != ESP_ERR_NVS_NOT_FOUND) {
+        ESP_LOGW(TAG, "Failed to clear device cert: %s", esp_err_to_name(err));
+    }
+
+    // Clear DS params (cipher_c, iv, ds_key_id, rsa_len)
+    kd::NvsHandle nvs(crypto::NVS_NAMESPACE, NVS_READWRITE);
+    if (!nvs) {
+        ESP_LOGE(TAG, "nvs open failed: %s", esp_err_to_name(nvs.open_error()));
+        return nvs.open_error();
+    }
+
+    nvs.erase_key(crypto::NVS_KEY_CIPHERTEXT);
+    nvs.erase_key(crypto::NVS_KEY_IV);
+    nvs.erase_key(crypto::NVS_KEY_DS_KEY_ID);
+    nvs.erase_key(crypto::NVS_KEY_RSA_LEN);
+
+    err = nvs.commit();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "nvs commit failed: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    ESP_LOGI(TAG, "All crypto data cleared");
+    return ESP_OK;
+}
+
 #endif // KD_COMMON_CRYPTO_DISABLE

@@ -158,11 +158,12 @@ esp_err_t ensure_key_exists() {
     keygen_mutex = xSemaphoreCreateBinary();
     xSemaphoreGive(keygen_mutex);
 
-    bool has_fuses = esp_efuse_get_key_purpose(DS_KEY_BLOCK) ==
+    esp_efuse_block_t ds_key_block = get_ds_key_block();
+    bool has_fuses = esp_efuse_get_key_purpose(ds_key_block) ==
                      ESP_EFUSE_KEY_PURPOSE_HMAC_DOWN_DIGITAL_SIGNATURE;
 
     if (has_fuses) {
-        ESP_LOGI(TAG, "skipping keygen, key already burnt to block: %d", (DS_KEY_BLOCK - 4));
+        ESP_LOGI(TAG, "skipping keygen, key already burnt to block: %d", (ds_key_block - 4));
         return ESP_OK;
     }
 
@@ -226,10 +227,10 @@ esp_err_t ensure_key_exists() {
 
     esp_ds_encrypt_params(encrypted.get(), iv, params.get(), hmac);
 
-    crypto_storage_store_ds_params(encrypted->c, iv, DS_KEY_BLOCK, (KEY_SIZE / 32) - 1);
+    crypto_storage_store_ds_params(encrypted->c, iv, ds_key_block, (KEY_SIZE / 32) - 1);
 
-    esp_efuse_write_key(DS_KEY_BLOCK, ESP_EFUSE_KEY_PURPOSE_HMAC_DOWN_DIGITAL_SIGNATURE, hmac, 32);
-    esp_efuse_set_read_protect(DS_KEY_BLOCK);
+    esp_efuse_write_key(ds_key_block, ESP_EFUSE_KEY_PURPOSE_HMAC_DOWN_DIGITAL_SIGNATURE, hmac, 32);
+    esp_efuse_set_read_protect(ds_key_block);
 
     return ESP_OK;
 }

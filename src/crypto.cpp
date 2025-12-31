@@ -45,7 +45,7 @@ CryptoState_t kd_common_crypto_get_state() {
         state = CRYPTO_STATE_VALID_CERT;
     }
 
-    bool has_fuses = esp_efuse_get_key_purpose(DS_KEY_BLOCK) ==
+    bool has_fuses = esp_efuse_get_key_purpose(get_ds_key_block()) ==
                      ESP_EFUSE_KEY_PURPOSE_HMAC_DOWN_DIGITAL_SIGNATURE;
 
     if (has_fuses) {
@@ -112,7 +112,7 @@ esp_err_t store_ds_params(uint8_t* c, uint8_t* iv, uint8_t key_id, uint16_t rsa_
 }
 
 bool crypto_will_generate_key() {
-    bool has_fuses = esp_efuse_get_key_purpose(DS_KEY_BLOCK) ==
+    bool has_fuses = esp_efuse_get_key_purpose(get_ds_key_block()) ==
                      ESP_EFUSE_KEY_PURPOSE_HMAC_DOWN_DIGITAL_SIGNATURE;
     return !has_fuses;
 }
