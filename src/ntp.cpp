@@ -1,5 +1,6 @@
 // NTP time synchronization with timezone support
 #include "ntp.h"
+#include "kd_common.h"
 
 #include <cstring>
 #include <esp_log.h>
@@ -14,6 +15,9 @@
 #include <cJSON.h>
 
 #include "embedded_tz_db.h"
+
+// Define NTP event base
+ESP_EVENT_DEFINE_BASE(KD_NTP_EVENTS);
 
 #define NTP_NVS_NAMESPACE "ntp_cfg2"  // Bumped to invalidate old struct layout
 #define TIME_INFO_URL "https://firmware.api.koiosdigital.net/tz"
@@ -186,6 +190,9 @@ void time_sync_callback(struct timeval* tv) {
     char time_str[32];
     strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S %Z", tm_info);
     ESP_LOGI(TAG, "Time synchronized: %s", time_str);
+
+    // Post sync complete event
+    esp_event_post(KD_NTP_EVENTS, KD_NTP_EVENT_SYNC_COMPLETE, nullptr, 0, 0);
 }
 
 void start_sntp() {
@@ -228,6 +235,8 @@ void wifi_event_handler(void*, esp_event_base_t base, int32_t id, void*) {
     }
     else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
         g_synced = false;
+        // Post sync lost event
+        esp_event_post(KD_NTP_EVENTS, KD_NTP_EVENT_SYNC_LOST, nullptr, 0, 0);
     }
 }
 
