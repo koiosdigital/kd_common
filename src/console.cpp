@@ -135,7 +135,8 @@ static void register_heap(void)
     ESP_ERROR_CHECK(esp_console_cmd_register(&heap_cmd));
 }
 
-/* 'task_dump' command prints task info */
+#if CONFIG_FREERTOS_USE_TRACE_FACILITY
+/* 'task_dump' command prints task info - requires CONFIG_FREERTOS_USE_TRACE_FACILITY */
 static int task_dump(int argc, char** argv)
 {
     UBaseType_t num_tasks = uxTaskGetNumberOfTasks();
@@ -182,6 +183,7 @@ static void register_task_dump(void)
     };
     ESP_ERROR_CHECK(esp_console_cmd_register(&cmd));
 }
+#endif // CONFIG_FREERTOS_USE_TRACE_FACILITY
 
 #ifndef KD_COMMON_CRYPTO_DISABLE
 static int crypto_status(int argc, char** argv)
@@ -424,7 +426,9 @@ void console_init() {
     esp_console_register_help_command();
     register_free();
     register_heap();
+#if CONFIG_FREERTOS_USE_TRACE_FACILITY
     register_task_dump();
+#endif
 
 #ifndef KD_COMMON_CRYPTO_DISABLE
     register_crypto_status();

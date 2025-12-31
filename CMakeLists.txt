@@ -10,13 +10,3 @@ idf_component_register(
     PRIV_INCLUDE_DIRS "src"
     REQUIRES bt esp_wifi nvs_flash wifi_provisioning efuse esp_http_client json esp_https_ota mbedtls bootloader_support console esp_driver_uart esp_driver_usb_serial_jtag esp_hw_support protobufs
 )
-
-# Feature disables - controlled via build options from parent project
-# Use -DKD_COMMON_CRYPTO_DISABLE=1 or -DKD_COMMON_CONSOLE_DISABLE=1 in cmake
-if(KD_COMMON_CRYPTO_DISABLE)
-    target_compile_definitions(${COMPONENT_LIB} PUBLIC KD_COMMON_CRYPTO_DISABLE)
-endif()
-
-if(KD_COMMON_CONSOLE_DISABLE)
-    target_compile_definitions(${COMPONENT_LIB} PUBLIC KD_COMMON_CONSOLE_DISABLE)
-endif()
