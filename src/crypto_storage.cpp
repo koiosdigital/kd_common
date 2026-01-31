@@ -3,7 +3,7 @@
 #ifndef KD_COMMON_CRYPTO_DISABLE
 
 #include "crypto_internal.h"
-#include "nvs_handle.hpp"
+#include "nvs_handle.h"
 
 #include <esp_log.h>
 #include <esp_ds.h>

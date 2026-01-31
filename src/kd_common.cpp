@@ -10,6 +10,10 @@
 #include "ota.h"
 #include "ntp.h"
 #include "embedded_tz_db.h"
+#include "kdmdns.h"
+#ifndef KD_COMMON_API_DISABLE
+#include "api.h"
+#endif
 
 static const char* TAG = "kd_common";
 
@@ -37,6 +41,12 @@ void kd_common_init() {
 
 #ifdef ENABLE_OTA
     ota_init();
+#endif
+
+    kdmdns_init();
+
+#ifndef KD_COMMON_API_DISABLE
+    api_init();
 #endif
 }
 
@@ -112,3 +122,15 @@ const kd_common_tz_entry_t* kd_common_get_all_timezones() {
 int kd_common_get_timezone_count() {
     return TZ_DB_NUM_ZONES;
 }
+
+// mDNS functions
+void kd_common_set_device_info(const char* model, const char* type) {
+    kdmdns_set_device_info(model, type);
+}
+
+// API functions
+#ifndef KD_COMMON_API_DISABLE
+httpd_handle_t kd_common_api_get_httpd_handle() {
+    return api_get_httpd_handle();
+}
+#endif

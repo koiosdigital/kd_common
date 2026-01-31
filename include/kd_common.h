@@ -4,6 +4,10 @@
 #include "esp_ds.h"
 #endif
 
+#ifndef KD_COMMON_API_DISABLE
+#include "esp_http_server.h"
+#endif
+
 #include "stdlib.h"
 #include "esp_event.h"
 
@@ -11,13 +15,13 @@
 extern "C" {
 #endif
 
-// NTP Events - posted when sync state changes
-ESP_EVENT_DECLARE_BASE(KD_NTP_EVENTS);
+    // NTP Events - posted when sync state changes
+    ESP_EVENT_DECLARE_BASE(KD_NTP_EVENTS);
 
-typedef enum {
-    KD_NTP_EVENT_SYNC_COMPLETE = 0,  // Time successfully synchronized
-    KD_NTP_EVENT_SYNC_LOST = 1,      // WiFi disconnected, sync may be stale
-} kd_ntp_event_id_t;
+    typedef enum {
+        KD_NTP_EVENT_SYNC_COMPLETE = 0,  // Time successfully synchronized
+        KD_NTP_EVENT_SYNC_LOST = 1,      // WiFi disconnected, sync may be stale
+    } kd_ntp_event_id_t;
 
 #ifdef __cplusplus
 }
@@ -112,3 +116,11 @@ typedef struct {
 
 const kd_common_tz_entry_t* kd_common_get_all_timezones();
 int kd_common_get_timezone_count();
+
+// mDNS functions
+void kd_common_set_device_info(const char* model, const char* type);
+
+// API functions
+#ifndef KD_COMMON_API_DISABLE
+httpd_handle_t kd_common_api_get_httpd_handle();
+#endif

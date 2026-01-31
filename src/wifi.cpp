@@ -11,7 +11,7 @@
 #include <cstring>
 
 #include "kd_common.h"
-#include "nvs_handle.hpp"
+#include "nvs_handle.h"
 
 static const char* TAG = "kd_wifi";
 
