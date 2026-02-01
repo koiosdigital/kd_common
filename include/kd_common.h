@@ -9,6 +9,7 @@
 #endif
 
 #include "stdlib.h"
+#include "esp_err.h"
 #include "esp_event.h"
 
 #ifdef __cplusplus
@@ -78,6 +79,20 @@ void kd_common_set_provisioning_pop_token_format(ProvisioningPOPTokenFormat_t fo
 void kd_common_start_provisioning();  // Start BLE provisioning manually (e.g., button hold)
 
 char* kd_common_run_command(char* input, int* return_code);
+
+#ifndef KD_COMMON_CONSOLE_DISABLE
+// Console command registration for external components
+typedef int (*kd_console_cmd_func_t)(int argc, char** argv);
+
+esp_err_t kd_console_register_cmd(const char* command, const char* help,
+                                   kd_console_cmd_func_t func);
+
+esp_err_t kd_console_register_cmd_with_args(const char* command, const char* help,
+                                             kd_console_cmd_func_t func, void* argtable);
+
+// Formatted output (respects capture mode for kd_common_run_command)
+int console_out(const char* format, ...) __attribute__((format(printf, 1, 2)));
+#endif
 
 // WiFi functions
 void kd_common_wifi_disconnect();

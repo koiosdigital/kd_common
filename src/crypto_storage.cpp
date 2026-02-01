@@ -328,14 +328,14 @@ char* crypto_get_ds_params_json() {
     char* base64_c = static_cast<char*>(malloc(4096));
     size_t base64_c_len = 0;
     mbedtls_base64_encode(reinterpret_cast<unsigned char*>(base64_c), 4096, &base64_c_len,
-                          reinterpret_cast<unsigned char*>(ds_data_ctx->esp_ds_data->c), ESP_DS_C_LEN);
+        reinterpret_cast<unsigned char*>(ds_data_ctx->esp_ds_data->c), ESP_DS_C_LEN);
     cJSON_AddStringToObject(json, "cipher_c", base64_c);
     free(base64_c);
 
     char* base64_iv = static_cast<char*>(malloc(4096));
     size_t base64_iv_len = 0;
     mbedtls_base64_encode(reinterpret_cast<unsigned char*>(base64_iv), 4096, &base64_iv_len,
-                          reinterpret_cast<unsigned char*>(ds_data_ctx->esp_ds_data->iv), ESP_DS_IV_LEN);
+        reinterpret_cast<unsigned char*>(ds_data_ctx->esp_ds_data->iv), ESP_DS_IV_LEN);
     cJSON_AddStringToObject(json, "iv", base64_iv);
     free(base64_iv);
 
@@ -389,13 +389,13 @@ esp_err_t crypto_store_ds_params_json(char* params) {
     size_t decoded_iv_len = 0;
 
     mbedtls_base64_decode(c, ESP_DS_C_LEN, &decoded_c_len,
-                          reinterpret_cast<unsigned char*>(base64_c), c_len);
+        reinterpret_cast<unsigned char*>(base64_c), c_len);
     mbedtls_base64_decode(iv, ESP_DS_IV_LEN, &decoded_iv_len,
-                          reinterpret_cast<unsigned char*>(base64_iv), iv_len);
+        reinterpret_cast<unsigned char*>(base64_iv), iv_len);
 
     if (decoded_c_len != ESP_DS_C_LEN || decoded_iv_len != ESP_DS_IV_LEN) {
         ESP_LOGE(TAG, "decoded length mismatch: c=%zu (expected %d), iv=%zu (expected %d)",
-                 decoded_c_len, ESP_DS_C_LEN, decoded_iv_len, ESP_DS_IV_LEN);
+            decoded_c_len, ESP_DS_C_LEN, decoded_iv_len, ESP_DS_IV_LEN);
         free(c);
         free(iv);
         cJSON_Delete(ds_params);

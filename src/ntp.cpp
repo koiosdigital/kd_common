@@ -26,219 +26,219 @@ static const char* TAG = "ntp";
 
 namespace {
 
-bool g_initialized = false;
-bool g_synced = false;
+    bool g_initialized = false;
+    bool g_synced = false;
 
-// Track if settings were modified before init (to preserve them)
-bool g_fetch_tz_set_before_init = false;
-bool g_auto_tz_set_before_init = false;
+    // Track if settings were modified before init (to preserve them)
+    bool g_fetch_tz_set_before_init = false;
+    bool g_auto_tz_set_before_init = false;
 
-// Default configuration
-ntp_config_t g_config = {
-    .auto_timezone = true,
-    .fetch_tz_on_boot = true,
-    .timezone = "UTC",
-    .ntp_server = "pool.ntp.org"
-};
+    // Default configuration
+    ntp_config_t g_config = {
+        .auto_timezone = true,
+        .fetch_tz_on_boot = true,
+        .timezone = "UTC",
+        .ntp_server = "pool.ntp.org"
+    };
 
-// HTTP response buffer for timezone API
-char g_http_response[512] = { 0 };
+    // HTTP response buffer for timezone API
+    char g_http_response[512] = { 0 };
 
-esp_err_t http_event_handler(esp_http_client_event_t* evt) {
-    if (evt->event_id == HTTP_EVENT_ON_DATA) {
-        size_t copy_len = evt->data_len;
-        if (copy_len >= sizeof(g_http_response)) {
-            copy_len = sizeof(g_http_response) - 1;
+    esp_err_t http_event_handler(esp_http_client_event_t* evt) {
+        if (evt->event_id == HTTP_EVENT_ON_DATA) {
+            size_t copy_len = evt->data_len;
+            if (copy_len >= sizeof(g_http_response)) {
+                copy_len = sizeof(g_http_response) - 1;
+            }
+            memcpy(g_http_response, evt->data, copy_len);
+            g_http_response[copy_len] = '\0';
         }
-        memcpy(g_http_response, evt->data, copy_len);
-        g_http_response[copy_len] = '\0';
-    }
-    return ESP_OK;
-}
-
-void load_config_from_nvs() {
-    // Save pre-init settings
-    bool saved_fetch_tz = g_config.fetch_tz_on_boot;
-    bool saved_auto_tz = g_config.auto_timezone;
-
-    nvs_handle_t nvs_handle;
-    esp_err_t err = nvs_open(NTP_NVS_NAMESPACE, NVS_READONLY, &nvs_handle);
-    if (err != ESP_OK) {
-        ESP_LOGI(TAG, "NVS namespace not found, using defaults");
-        return;
+        return ESP_OK;
     }
 
-    size_t required_size = sizeof(ntp_config_t);
-    err = nvs_get_blob(nvs_handle, "config", &g_config, &required_size);
-    if (err != ESP_OK) {
-        ESP_LOGI(TAG, "Config not found in NVS, using defaults");
-    }
-    else {
-        ESP_LOGI(TAG, "Loaded config: auto_tz=%d, fetch_on_boot=%d, tz=%s, ntp=%s",
-            g_config.auto_timezone, g_config.fetch_tz_on_boot,
-            g_config.timezone, g_config.ntp_server);
-    }
+    void load_config_from_nvs() {
+        // Save pre-init settings
+        bool saved_fetch_tz = g_config.fetch_tz_on_boot;
+        bool saved_auto_tz = g_config.auto_timezone;
 
-    nvs_close(nvs_handle);
+        nvs_handle_t nvs_handle;
+        esp_err_t err = nvs_open(NTP_NVS_NAMESPACE, NVS_READONLY, &nvs_handle);
+        if (err != ESP_OK) {
+            ESP_LOGI(TAG, "NVS namespace not found, using defaults");
+            return;
+        }
 
-    // Restore pre-init settings if they were explicitly set
-    if (g_fetch_tz_set_before_init) {
-        g_config.fetch_tz_on_boot = saved_fetch_tz;
-        ESP_LOGI(TAG, "Preserving pre-init fetch_tz_on_boot=%d", saved_fetch_tz);
-    }
-    if (g_auto_tz_set_before_init) {
-        g_config.auto_timezone = saved_auto_tz;
-        ESP_LOGI(TAG, "Preserving pre-init auto_timezone=%d", saved_auto_tz);
-    }
-}
+        size_t required_size = sizeof(ntp_config_t);
+        err = nvs_get_blob(nvs_handle, "config", &g_config, &required_size);
+        if (err != ESP_OK) {
+            ESP_LOGI(TAG, "Config not found in NVS, using defaults");
+        }
+        else {
+            ESP_LOGI(TAG, "Loaded config: auto_tz=%d, fetch_on_boot=%d, tz=%s, ntp=%s",
+                g_config.auto_timezone, g_config.fetch_tz_on_boot,
+                g_config.timezone, g_config.ntp_server);
+        }
 
-void save_config_to_nvs() {
-    nvs_handle_t nvs_handle;
-    esp_err_t err = nvs_open(NTP_NVS_NAMESPACE, NVS_READWRITE, &nvs_handle);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to open NVS: %s", esp_err_to_name(err));
-        return;
-    }
+        nvs_close(nvs_handle);
 
-    err = nvs_set_blob(nvs_handle, "config", &g_config, sizeof(ntp_config_t));
-    if (err == ESP_OK) {
-        nvs_commit(nvs_handle);
-        ESP_LOGI(TAG, "Config saved to NVS");
-    }
-    else {
-        ESP_LOGE(TAG, "Failed to save config: %s", esp_err_to_name(err));
+        // Restore pre-init settings if they were explicitly set
+        if (g_fetch_tz_set_before_init) {
+            g_config.fetch_tz_on_boot = saved_fetch_tz;
+            ESP_LOGI(TAG, "Preserving pre-init fetch_tz_on_boot=%d", saved_fetch_tz);
+        }
+        if (g_auto_tz_set_before_init) {
+            g_config.auto_timezone = saved_auto_tz;
+            ESP_LOGI(TAG, "Preserving pre-init auto_timezone=%d", saved_auto_tz);
+        }
     }
 
-    nvs_close(nvs_handle);
-}
+    void save_config_to_nvs() {
+        nvs_handle_t nvs_handle;
+        esp_err_t err = nvs_open(NTP_NVS_NAMESPACE, NVS_READWRITE, &nvs_handle);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to open NVS: %s", esp_err_to_name(err));
+            return;
+        }
 
-void fetch_and_apply_timezone() {
-    const char* tzname = g_config.timezone;
-    const char* posixTZ = nullptr;
-
-    if (g_config.auto_timezone && g_config.fetch_tz_on_boot) {
-        ESP_LOGI(TAG, "Fetching timezone from API");
-
-        esp_http_client_config_t config = {};
-        config.url = TIME_INFO_URL;
-        config.event_handler = http_event_handler;
-        config.crt_bundle_attach = esp_crt_bundle_attach;
-        config.timeout_ms = 10000;
-
-        esp_http_client_handle_t client = esp_http_client_init(&config);
-        esp_err_t err = esp_http_client_perform(client);
-
+        err = nvs_set_blob(nvs_handle, "config", &g_config, sizeof(ntp_config_t));
         if (err == ESP_OK) {
-            ESP_LOGD(TAG, "API response: %s", g_http_response);
+            nvs_commit(nvs_handle);
+            ESP_LOGI(TAG, "Config saved to NVS");
+        }
+        else {
+            ESP_LOGE(TAG, "Failed to save config: %s", esp_err_to_name(err));
+        }
 
-            cJSON* root = cJSON_Parse(g_http_response);
-            if (root != nullptr) {
-                cJSON* tz_json = cJSON_GetObjectItem(root, "tzname");
-                if (tz_json != nullptr && cJSON_IsString(tz_json)) {
-                    const char* fetched_tz = cJSON_GetStringValue(tz_json);
-                    ESP_LOGI(TAG, "API timezone: %s", fetched_tz);
+        nvs_close(nvs_handle);
+    }
 
-                    strncpy(g_config.timezone, fetched_tz, sizeof(g_config.timezone) - 1);
-                    g_config.timezone[sizeof(g_config.timezone) - 1] = '\0';
-                    tzname = g_config.timezone;
+    void fetch_and_apply_timezone() {
+        const char* tzname = g_config.timezone;
+        const char* posixTZ = nullptr;
 
-                    save_config_to_nvs();
+        if (g_config.auto_timezone && g_config.fetch_tz_on_boot) {
+            ESP_LOGI(TAG, "Fetching timezone from API");
+
+            esp_http_client_config_t config = {};
+            config.url = TIME_INFO_URL;
+            config.event_handler = http_event_handler;
+            config.crt_bundle_attach = esp_crt_bundle_attach;
+            config.timeout_ms = 10000;
+
+            esp_http_client_handle_t client = esp_http_client_init(&config);
+            esp_err_t err = esp_http_client_perform(client);
+
+            if (err == ESP_OK) {
+                ESP_LOGD(TAG, "API response: %s", g_http_response);
+
+                cJSON* root = cJSON_Parse(g_http_response);
+                if (root != nullptr) {
+                    cJSON* tz_json = cJSON_GetObjectItem(root, "tzname");
+                    if (tz_json != nullptr && cJSON_IsString(tz_json)) {
+                        const char* fetched_tz = cJSON_GetStringValue(tz_json);
+                        ESP_LOGI(TAG, "API timezone: %s", fetched_tz);
+
+                        strncpy(g_config.timezone, fetched_tz, sizeof(g_config.timezone) - 1);
+                        g_config.timezone[sizeof(g_config.timezone) - 1] = '\0';
+                        tzname = g_config.timezone;
+
+                        save_config_to_nvs();
+                    }
+                    cJSON_Delete(root);
                 }
-                cJSON_Delete(root);
+            }
+            else {
+                ESP_LOGW(TAG, "Failed to fetch timezone: %s, using cached: %s",
+                    esp_err_to_name(err), g_config.timezone);
+            }
+
+            esp_http_client_cleanup(client);
+            memset(g_http_response, 0, sizeof(g_http_response));
+        }
+        else if (!g_config.fetch_tz_on_boot) {
+            ESP_LOGI(TAG, "Timezone fetch on boot disabled, using: %s", tzname);
+        }
+        else {
+            ESP_LOGI(TAG, "Using manual timezone: %s", tzname);
+        }
+
+        // Look up POSIX string from embedded database
+        posixTZ = tz_db_get_posix_str(tzname);
+        if (posixTZ == nullptr) {
+            ESP_LOGW(TAG, "Timezone '%s' not found in database, using UTC", tzname);
+            posixTZ = "UTC0";
+        }
+
+        ESP_LOGI(TAG, "Setting POSIX timezone: %s", posixTZ);
+        setenv("TZ", posixTZ, 1);
+        tzset();
+    }
+
+    void apply_timezone_local() {
+        // Apply timezone from config without HTTP fetch
+        const char* posixTZ = tz_db_get_posix_str(g_config.timezone);
+        if (posixTZ == nullptr) posixTZ = "UTC0";
+        setenv("TZ", posixTZ, 1);
+        tzset();
+    }
+
+    void time_sync_callback(struct timeval* tv) {
+        g_synced = true;
+
+        time_t now = tv->tv_sec;
+        struct tm* tm_info = localtime(&now);
+        char time_str[32];
+        strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S %Z", tm_info);
+        ESP_LOGI(TAG, "Time synchronized: %s", time_str);
+
+        // Post sync complete event
+        esp_event_post(KD_NTP_EVENTS, KD_NTP_EVENT_SYNC_COMPLETE, nullptr, 0, 0);
+    }
+
+    void start_sntp() {
+        if (esp_sntp_enabled()) {
+            esp_sntp_stop();
+        }
+
+        ESP_LOGI(TAG, "Starting SNTP with server: %s", g_config.ntp_server);
+
+        esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);
+        esp_sntp_setservername(0, g_config.ntp_server);
+        esp_sntp_setservername(1, "time.google.com");
+        esp_sntp_setservername(2, "time.cloudflare.com");
+        esp_sntp_set_time_sync_notification_cb(time_sync_callback);
+        esp_sntp_set_sync_interval(3600 * 1000);  // Sync every hour
+        esp_sntp_init();
+    }
+
+    void setup_time_task(void* pvParameter) {
+        // Fetch and apply timezone (may make HTTP request if enabled)
+        fetch_and_apply_timezone();
+
+        // Start NTP
+        start_sntp();
+
+        vTaskDelete(nullptr);
+    }
+
+    void wifi_event_handler(void*, esp_event_base_t base, int32_t id, void*) {
+        if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
+            if (g_config.fetch_tz_on_boot && g_config.auto_timezone) {
+                // Need task for HTTP request
+                xTaskCreate(setup_time_task, "ntp_setup", 4096, nullptr, 5, nullptr);
+            }
+            else {
+                // No HTTP needed, just apply cached timezone and start SNTP
+                apply_timezone_local();
+                start_sntp();
             }
         }
-        else {
-            ESP_LOGW(TAG, "Failed to fetch timezone: %s, using cached: %s",
-                esp_err_to_name(err), g_config.timezone);
-        }
-
-        esp_http_client_cleanup(client);
-        memset(g_http_response, 0, sizeof(g_http_response));
-    }
-    else if (!g_config.fetch_tz_on_boot) {
-        ESP_LOGI(TAG, "Timezone fetch on boot disabled, using: %s", tzname);
-    }
-    else {
-        ESP_LOGI(TAG, "Using manual timezone: %s", tzname);
-    }
-
-    // Look up POSIX string from embedded database
-    posixTZ = tz_db_get_posix_str(tzname);
-    if (posixTZ == nullptr) {
-        ESP_LOGW(TAG, "Timezone '%s' not found in database, using UTC", tzname);
-        posixTZ = "UTC0";
-    }
-
-    ESP_LOGI(TAG, "Setting POSIX timezone: %s", posixTZ);
-    setenv("TZ", posixTZ, 1);
-    tzset();
-}
-
-void apply_timezone_local() {
-    // Apply timezone from config without HTTP fetch
-    const char* posixTZ = tz_db_get_posix_str(g_config.timezone);
-    if (posixTZ == nullptr) posixTZ = "UTC0";
-    setenv("TZ", posixTZ, 1);
-    tzset();
-}
-
-void time_sync_callback(struct timeval* tv) {
-    g_synced = true;
-
-    time_t now = tv->tv_sec;
-    struct tm* tm_info = localtime(&now);
-    char time_str[32];
-    strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S %Z", tm_info);
-    ESP_LOGI(TAG, "Time synchronized: %s", time_str);
-
-    // Post sync complete event
-    esp_event_post(KD_NTP_EVENTS, KD_NTP_EVENT_SYNC_COMPLETE, nullptr, 0, 0);
-}
-
-void start_sntp() {
-    if (esp_sntp_enabled()) {
-        esp_sntp_stop();
-    }
-
-    ESP_LOGI(TAG, "Starting SNTP with server: %s", g_config.ntp_server);
-
-    esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);
-    esp_sntp_setservername(0, g_config.ntp_server);
-    esp_sntp_setservername(1, "time.google.com");
-    esp_sntp_setservername(2, "time.cloudflare.com");
-    esp_sntp_set_time_sync_notification_cb(time_sync_callback);
-    esp_sntp_set_sync_interval(3600 * 1000);  // Sync every hour
-    esp_sntp_init();
-}
-
-void setup_time_task(void* pvParameter) {
-    // Fetch and apply timezone (may make HTTP request if enabled)
-    fetch_and_apply_timezone();
-
-    // Start NTP
-    start_sntp();
-
-    vTaskDelete(nullptr);
-}
-
-void wifi_event_handler(void*, esp_event_base_t base, int32_t id, void*) {
-    if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
-        if (g_config.fetch_tz_on_boot && g_config.auto_timezone) {
-            // Need task for HTTP request
-            xTaskCreate(setup_time_task, "ntp_setup", 8192, nullptr, 5, nullptr);
-        }
-        else {
-            // No HTTP needed, just apply cached timezone and start SNTP
-            apply_timezone_local();
-            start_sntp();
+        else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
+            g_synced = false;
+            // Post sync lost event
+            esp_event_post(KD_NTP_EVENTS, KD_NTP_EVENT_SYNC_LOST, nullptr, 0, 0);
         }
     }
-    else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
-        g_synced = false;
-        // Post sync lost event
-        esp_event_post(KD_NTP_EVENTS, KD_NTP_EVENT_SYNC_LOST, nullptr, 0, 0);
-    }
-}
 
 }  // namespace
 
@@ -319,7 +319,7 @@ void ntp_set_auto_timezone(bool enabled) {
 
     // If enabling and WiFi is connected, fetch timezone
     if (enabled && ntp_is_synced() && g_config.fetch_tz_on_boot) {
-        xTaskCreate(setup_time_task, "ntp_setup", 8192, nullptr, 5, nullptr);
+        xTaskCreate(setup_time_task, "ntp_setup", 4096, nullptr, 5, nullptr);
     }
 }
 

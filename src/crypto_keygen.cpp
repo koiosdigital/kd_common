@@ -87,7 +87,7 @@ void calculate_rinv_mprime(mbedtls_mpi* N, mbedtls_mpi* rinv, uint32_t* mprime) 
 }
 
 void rinv_mprime_to_ds_params(mbedtls_mpi* D, mbedtls_mpi* N, mbedtls_mpi* rinv,
-                               uint32_t mprime, esp_ds_p_data_t* params) {
+    uint32_t mprime, esp_ds_p_data_t* params) {
     mbedtls_mpi_write_binary(D, reinterpret_cast<uint8_t*>(params->Y), sizeof(params->Y));
     mbedtls_mpi_write_binary(N, reinterpret_cast<uint8_t*>(params->M), sizeof(params->M));
     mbedtls_mpi_write_binary(rinv, reinterpret_cast<uint8_t*>(params->Rb), sizeof(params->Rb));
@@ -120,7 +120,7 @@ esp_err_t store_csr(mbedtls_rsa_context* rsa) {
             mbedtls_ctr_drbg_free(ctr_drbg);
             mbedtls_entropy_free(entropy);
         }
-    } cleanup{&req, &ctr_drbg, &entropy};
+    } cleanup{ &req, &ctr_drbg, &entropy };
 
     mbedtls_ctr_drbg_seed(&ctr_drbg, mbedtls_entropy_func, &entropy, nullptr, 0);
 
@@ -145,7 +145,7 @@ esp_err_t store_csr(mbedtls_rsa_context* rsa) {
     auto csr_buffer = std::make_unique<unsigned char[]>(PEM_BUFFER_SIZE);
 
     ret = mbedtls_x509write_csr_pem(&req, csr_buffer.get(), PEM_BUFFER_SIZE,
-                                     mbedtls_ctr_drbg_random, &ctr_drbg);
+        mbedtls_ctr_drbg_random, &ctr_drbg);
     if (ret != 0) {
         ESP_LOGE(TAG, "csr_pem failed: %d", ret);
         return ESP_FAIL;
@@ -160,7 +160,7 @@ esp_err_t ensure_key_exists() {
 
     esp_efuse_block_t ds_key_block = get_ds_key_block();
     bool has_fuses = esp_efuse_get_key_purpose(ds_key_block) ==
-                     ESP_EFUSE_KEY_PURPOSE_HMAC_DOWN_DIGITAL_SIGNATURE;
+        ESP_EFUSE_KEY_PURPOSE_HMAC_DOWN_DIGITAL_SIGNATURE;
 
     if (has_fuses) {
         ESP_LOGI(TAG, "skipping keygen, key already burnt to block: %d", (ds_key_block - 4));
@@ -180,7 +180,7 @@ esp_err_t ensure_key_exists() {
             mbedtls_rsa_free(rsa);
             mbedtls_mpi_free(rinv);
         }
-    } mbed_cleanup{&rsa, &rinv};
+    } mbed_cleanup{ &rsa, &rinv };
 
     // Generate RSA keypair on APP_CPU
     xTaskCreatePinnedToCore(keygen_task, "keygen_task", 8192, &rsa, 5, nullptr, 1);

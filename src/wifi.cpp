@@ -17,16 +17,16 @@ static const char* TAG = "kd_wifi";
 
 namespace {
 
-constexpr const char* NVS_NAMESPACE = "kd_common";
-constexpr const char* HOSTNAME_KEY = "wifi_hostname";
-constexpr size_t MAX_HOSTNAME_LEN = 63;  // RFC 1123
+    constexpr const char* NVS_NAMESPACE = "kd_common";
+    constexpr const char* HOSTNAME_KEY = "wifi_hostname";
+    constexpr size_t MAX_HOSTNAME_LEN = 63;  // RFC 1123
 
-struct HostnameCache {
-    char buffer[MAX_HOSTNAME_LEN + 1] = {};
-    bool loaded = false;
-};
+    struct HostnameCache {
+        char buffer[MAX_HOSTNAME_LEN + 1] = {};
+        bool loaded = false;
+    };
 
-HostnameCache hostname_cache;
+    HostnameCache hostname_cache;
 
 }  // namespace
 

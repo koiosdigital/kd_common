@@ -35,37 +35,37 @@ typedef enum {
 extern "C" {
 #endif
 
-// CRC16-CCITT calculation
-uint16_t ble_protocol_crc16(const uint8_t* data, size_t len);
+    // CRC16-CCITT calculation
+    uint16_t ble_protocol_crc16(const uint8_t* data, size_t len);
 
-// Reset protocol state
-void ble_protocol_reset_input(void);
-void ble_protocol_reset_output(void);
-void ble_protocol_reset_all(void);
+    // Reset protocol state
+    void ble_protocol_reset_input(void);
+    void ble_protocol_reset_output(void);
+    void ble_protocol_reset_all(void);
 
-// Input handling
-// Returns result code indicating chunk status
-ble_receive_result_t ble_protocol_receive_chunk(const uint8_t* frame, size_t frame_len);
+    // Input handling
+    // Returns result code indicating chunk status
+    ble_receive_result_t ble_protocol_receive_chunk(const uint8_t* frame, size_t frame_len);
 
-// Get the assembled input data (valid after receive_chunk returns true)
-const uint8_t* ble_protocol_get_input_data(void);
-size_t ble_protocol_get_input_len(void);
+    // Get the assembled input data (valid after receive_chunk returns true)
+    const uint8_t* ble_protocol_get_input_data(void);
+    size_t ble_protocol_get_input_len(void);
 
-// Output handling
-// Prepare response data for chunked transmission
-void ble_protocol_set_output(const uint8_t* data, size_t len);
-bool ble_protocol_has_output(void);
+    // Output handling
+    // Prepare response data for chunked transmission
+    void ble_protocol_set_output(const uint8_t* data, size_t len);
+    bool ble_protocol_has_output(void);
 
-// Build next output chunk frame (caller must free returned buffer)
-// Returns NULL if no more chunks
-uint8_t* ble_protocol_build_next_chunk(size_t* out_len);
+    // Build next output chunk frame (caller must free returned buffer)
+    // Returns NULL if no more chunks
+    uint8_t* ble_protocol_build_next_chunk(size_t* out_len);
 
-// Build retransmit frame (caller must free returned buffer)
-// Returns NULL if no previous frame
-uint8_t* ble_protocol_build_retransmit(size_t* out_len);
+    // Build retransmit frame (caller must free returned buffer)
+    // Returns NULL if no previous frame
+    uint8_t* ble_protocol_build_retransmit(size_t* out_len);
 
-// Build single-byte response (caller must free returned buffer)
-uint8_t* ble_protocol_build_single_response(uint8_t value, size_t* out_len);
+    // Build single-byte response (caller must free returned buffer)
+    uint8_t* ble_protocol_build_single_response(uint8_t value, size_t* out_len);
 
 #ifdef __cplusplus
 }

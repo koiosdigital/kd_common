@@ -7,16 +7,16 @@
 
 namespace {
 
-std::once_flag init_flag;
-char device_name_buf[64] = {};
+    std::once_flag init_flag;
+    char device_name_buf[64] = {};
 
-void init_device_name() {
-    uint8_t mac[6];
-    esp_efuse_mac_get_default(mac);
-    std::snprintf(device_name_buf, sizeof(device_name_buf),
-                  "%s-%02X%02X%02X%02X%02X%02X",
-                  DEVICE_NAME_PREFIX, mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
-}
+    void init_device_name() {
+        uint8_t mac[6];
+        esp_efuse_mac_get_default(mac);
+        std::snprintf(device_name_buf, sizeof(device_name_buf),
+            "%s-%02X%02X%02X%02X%02X%02X",
+            DEVICE_NAME_PREFIX, mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+    }
 
 }  // namespace
 

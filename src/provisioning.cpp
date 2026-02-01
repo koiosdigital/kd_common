@@ -196,7 +196,8 @@ void provisioning_init() {
     if (!provisioned) {
         ESP_LOGI(TAG, "Not provisioned - starting BLE provisioning");
         start_provisioning_internal();
-    } else {
+    }
+    else {
         ESP_LOGI(TAG, "Already provisioned - skipping BLE");
     }
 }

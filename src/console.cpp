@@ -34,36 +34,36 @@ static const char* TAG = "console";
 
 namespace {
 
-constexpr size_t OUTPUT_BUFFER_SIZE = 4096;
+    constexpr size_t OUTPUT_BUFFER_SIZE = 4096;
 
-// Encapsulated console output state
-struct ConsoleContext {
-    bool use_printf = true;
-    char* output_buffer = nullptr;
-    size_t output_buffer_pos = 0;
+    // Encapsulated console output state
+    struct ConsoleContext {
+        bool use_printf = true;
+        char* output_buffer = nullptr;
+        size_t output_buffer_pos = 0;
 
-    void reset_buffer() {
-        output_buffer = nullptr;
-        output_buffer_pos = 0;
-    }
-};
+        void reset_buffer() {
+            output_buffer = nullptr;
+            output_buffer_pos = 0;
+        }
+    };
 
-ConsoleContext ctx;
+    ConsoleContext ctx;
 
-// RAII guard for output mode - restores use_printf on destruction
-class OutputModeGuard {
-public:
-    explicit OutputModeGuard(bool new_mode) : saved_mode_(ctx.use_printf) {
-        ctx.use_printf = new_mode;
-    }
-    ~OutputModeGuard() {
-        ctx.use_printf = saved_mode_;
-    }
-    OutputModeGuard(const OutputModeGuard&) = delete;
-    OutputModeGuard& operator=(const OutputModeGuard&) = delete;
-private:
-    bool saved_mode_;
-};
+    // RAII guard for output mode - restores use_printf on destruction
+    class OutputModeGuard {
+    public:
+        explicit OutputModeGuard(bool new_mode) : saved_mode_(ctx.use_printf) {
+            ctx.use_printf = new_mode;
+        }
+        ~OutputModeGuard() {
+            ctx.use_printf = saved_mode_;
+        }
+        OutputModeGuard(const OutputModeGuard&) = delete;
+        OutputModeGuard& operator=(const OutputModeGuard&) = delete;
+    private:
+        bool saved_mode_;
+    };
 
 }  // namespace
 
@@ -74,11 +74,14 @@ int console_out(const char* format, ...)
 
     if (ctx.use_printf) {
         vprintf(format, args);
-    } else if (ctx.output_buffer == nullptr) {
+    }
+    else if (ctx.output_buffer == nullptr) {
         ESP_LOGE(TAG, "cannot override command output buffer if null");
-    } else if (ctx.output_buffer_pos >= (OUTPUT_BUFFER_SIZE - 1)) {
+    }
+    else if (ctx.output_buffer_pos >= (OUTPUT_BUFFER_SIZE - 1)) {
         ESP_LOGW(TAG, "output buffer overflow, truncating output");
-    } else {
+    }
+    else {
         const size_t available = OUTPUT_BUFFER_SIZE - ctx.output_buffer_pos;
         int written = vsnprintf(ctx.output_buffer + ctx.output_buffer_pos, available, format, args);
         if (written > 0) {
@@ -156,12 +159,12 @@ static int task_dump(int argc, char** argv)
     for (UBaseType_t i = 0; i < num_tasks; i++) {
         const char* state;
         switch (task_array[i].eCurrentState) {
-            case eRunning:   state = "RUN"; break;
-            case eReady:     state = "RDY"; break;
-            case eBlocked:   state = "BLK"; break;
-            case eSuspended: state = "SUS"; break;
-            case eDeleted:   state = "DEL"; break;
-            default:         state = "???"; break;
+        case eRunning:   state = "RUN"; break;
+        case eReady:     state = "RDY"; break;
+        case eBlocked:   state = "BLK"; break;
+        case eSuspended: state = "SUS"; break;
+        case eDeleted:   state = "DEL"; break;
+        default:         state = "???"; break;
         }
         console_out("%-16s %5s %5u %10u\n",
             task_array[i].pcTaskName,
@@ -534,7 +537,7 @@ static int get_version(int argc, char** argv)
     console_out("  \"compile_time\": \"%s\",\n", app_desc->time);
     console_out("  \"compile_date\": \"%s\",\n", app_desc->date);
     console_out("  \"idf_version\": \"%s\",\n", app_desc->idf_ver);
-    console_out("  \"secure_version\": %d,\n", app_desc->secure_version);
+    console_out("  \"secure_version\": %lu,\n", app_desc->secure_version);
     console_out("  \"error\": false\n");
     console_out("}\n");
 
@@ -573,6 +576,29 @@ char* kd_common_run_command(char* input, int* return_code) {
     // Transfer ownership to caller
     ctx.reset_buffer();
     return buffer;
+}
+
+esp_err_t kd_console_register_cmd(const char* command, const char* help,
+    kd_console_cmd_func_t func) {
+    const esp_console_cmd_t cmd = {
+        .command = command,
+        .help = help,
+        .hint = NULL,
+        .func = func,
+    };
+    return esp_console_cmd_register(&cmd);
+}
+
+esp_err_t kd_console_register_cmd_with_args(const char* command, const char* help,
+    kd_console_cmd_func_t func, void* argtable) {
+    const esp_console_cmd_t cmd = {
+        .command = command,
+        .help = help,
+        .hint = NULL,
+        .func = func,
+        .argtable = argtable,
+    };
+    return esp_console_cmd_register(&cmd);
 }
 
 void console_init() {

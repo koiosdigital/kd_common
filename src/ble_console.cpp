@@ -109,7 +109,8 @@ static void handle_request(const Kd__V1__ConsoleMessage* req) {
         if (csr_buf == NULL) {
             result.error_code = ESP_ERR_NO_MEM;
             result.detail = (char*)"no mem";
-        } else {
+        }
+        else {
             size_t csr_len = BLE_CONSOLE_PEM_BUFFER_SIZE;
             esp_err_t err = crypto_get_csr((char*)csr_buf, &csr_len);
             if (err == ESP_OK) {
@@ -117,7 +118,8 @@ static void handle_request(const Kd__V1__ConsoleMessage* req) {
                 result.detail = (char*)"ok";
                 get_csr_resp.csr_pem.data = csr_buf;
                 get_csr_resp.csr_pem.len = csr_len;
-            } else {
+            }
+            else {
                 result.error_code = err;
                 result.detail = (char*)"no csr";
             }
@@ -143,7 +145,8 @@ static void handle_request(const Kd__V1__ConsoleMessage* req) {
             if (err == ESP_OK) {
                 result.success = true;
                 result.detail = (char*)"ok";
-            } else {
+            }
+            else {
                 result.error_code = err;
                 result.detail = (char*)"failed";
             }
@@ -173,7 +176,8 @@ static void handle_request(const Kd__V1__ConsoleMessage* req) {
         if (cert_buf == NULL) {
             result.error_code = ESP_ERR_NO_MEM;
             result.detail = (char*)"no mem";
-        } else {
+        }
+        else {
             size_t cert_len = BLE_CONSOLE_PEM_BUFFER_SIZE;
             esp_err_t err = kd_common_get_device_cert((char*)cert_buf, &cert_len);
             if (err == ESP_OK) {
@@ -181,7 +185,8 @@ static void handle_request(const Kd__V1__ConsoleMessage* req) {
                 result.detail = (char*)"ok";
                 get_cert_resp.cert_pem.data = cert_buf;
                 get_cert_resp.cert_pem.len = cert_len;
-            } else {
+            }
+            else {
                 result.error_code = err;
                 result.detail = (char*)"no cert";
             }
@@ -206,13 +211,15 @@ static void handle_request(const Kd__V1__ConsoleMessage* req) {
             result.success = true;
             result.detail = (char*)"ok";
             crypto_retry_count = 0;
-        } else {
+        }
+        else {
             crypto_retry_count++;
             if (crypto_retry_count >= CRYPTO_MAX_RETRIES) {
                 result.error_code = -1;
                 result.detail = (char*)"crypto error: max retries";
                 crypto_retry_count = 0;
-            } else {
+            }
+            else {
                 result.error_code = -2;
                 result.detail = (char*)"crypto error: retry";
             }
@@ -245,12 +252,14 @@ static void handle_request(const Kd__V1__ConsoleMessage* req) {
             if (params_copy == NULL) {
                 result.error_code = ESP_ERR_NO_MEM;
                 result.detail = (char*)"no mem";
-            } else {
+            }
+            else {
                 esp_err_t err = crypto_store_ds_params_json(params_copy);
                 if (err == ESP_OK) {
                     result.success = true;
                     result.detail = (char*)"ok";
-                } else {
+                }
+                else {
                     result.error_code = err;
                     result.detail = (char*)"failed";
                 }
@@ -296,11 +305,13 @@ static void handle_request(const Kd__V1__ConsoleMessage* req) {
             if (err == ESP_OK) {
                 result.success = true;
                 result.detail = (char*)"ok";
-            } else {
+            }
+            else {
                 result.error_code = err;
                 result.detail = (char*)"failed";
             }
-        } else {
+        }
+        else {
             result.error_code = ESP_ERR_INVALID_ARG;
         }
 
@@ -353,7 +364,8 @@ esp_err_t ble_console_endpoint(uint32_t session_id, const uint8_t* inbuf, ssize_
                 if (*outbuf == NULL) {
                     *outbuf = ble_protocol_build_single_response(BLE_RSP_EMPTY, (size_t*)outlen);
                 }
-            } else {
+            }
+            else {
                 *outbuf = ble_protocol_build_single_response(BLE_RSP_EMPTY, (size_t*)outlen);
             }
             return ESP_OK;
@@ -401,7 +413,8 @@ esp_err_t ble_console_endpoint(uint32_t session_id, const uint8_t* inbuf, ssize_
             if (ble_protocol_has_output()) {
                 *outbuf = ble_protocol_build_next_chunk((size_t*)outlen);
             }
-        } else if (result == BLE_RECEIVE_OK) {
+        }
+        else if (result == BLE_RECEIVE_OK) {
             // More chunks expected - request next chunk
             *outbuf = ble_protocol_build_single_response(BLE_CMD_NEXT, (size_t*)outlen);
         }

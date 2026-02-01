@@ -10,87 +10,87 @@ static const char* TAG = "ble_proto";
 
 namespace {
 
-// BLE protocol state encapsulation
-// Buffers are allocated from SPIRAM to save internal RAM
-struct BleProtocolState {
-    // Input reassembly state (allocated from SPIRAM)
-    uint8_t* in_buffer = nullptr;
-    size_t in_total_len = 0;
-    size_t in_received = 0;
-    uint8_t in_next_chunk_idx = 0;
+    // BLE protocol state encapsulation
+    // Buffers are allocated from SPIRAM to save internal RAM
+    struct BleProtocolState {
+        // Input reassembly state (allocated from SPIRAM)
+        uint8_t* in_buffer = nullptr;
+        size_t in_total_len = 0;
+        size_t in_received = 0;
+        uint8_t in_next_chunk_idx = 0;
 
-    // Output chunking state (allocated from SPIRAM)
-    uint8_t* out_buffer = nullptr;
-    size_t out_len = 0;
-    uint8_t out_next_chunk_idx = 0;
-    bool out_has_response = false;
+        // Output chunking state (allocated from SPIRAM)
+        uint8_t* out_buffer = nullptr;
+        size_t out_len = 0;
+        uint8_t out_next_chunk_idx = 0;
+        bool out_has_response = false;
 
-    // Last sent frame for retransmission (RAII managed)
-    std::unique_ptr<uint8_t[]> last_frame;
-    size_t last_frame_len = 0;
+        // Last sent frame for retransmission (RAII managed)
+        std::unique_ptr<uint8_t[]> last_frame;
+        size_t last_frame_len = 0;
 
-    bool initialized = false;
+        bool initialized = false;
 
-    bool init() {
-        if (initialized) return true;
+        bool init() {
+            if (initialized) return true;
 
-        in_buffer = static_cast<uint8_t*>(
-            heap_caps_calloc(BLE_CONSOLE_MAX_PAYLOAD, 1, MALLOC_CAP_SPIRAM));
-        if (!in_buffer) {
-            ESP_LOGE(TAG, "Failed to alloc in_buffer from SPIRAM");
-            return false;
+            in_buffer = static_cast<uint8_t*>(
+                heap_caps_calloc(BLE_CONSOLE_MAX_PAYLOAD, 1, MALLOC_CAP_SPIRAM));
+            if (!in_buffer) {
+                ESP_LOGE(TAG, "Failed to alloc in_buffer from SPIRAM");
+                return false;
+            }
+
+            out_buffer = static_cast<uint8_t*>(
+                heap_caps_calloc(BLE_CONSOLE_MAX_PAYLOAD, 1, MALLOC_CAP_SPIRAM));
+            if (!out_buffer) {
+                ESP_LOGE(TAG, "Failed to alloc out_buffer from SPIRAM");
+                heap_caps_free(in_buffer);
+                in_buffer = nullptr;
+                return false;
+            }
+
+            initialized = true;
+            ESP_LOGI(TAG, "BLE protocol buffers allocated from SPIRAM (32KB total)");
+            return true;
         }
 
-        out_buffer = static_cast<uint8_t*>(
-            heap_caps_calloc(BLE_CONSOLE_MAX_PAYLOAD, 1, MALLOC_CAP_SPIRAM));
-        if (!out_buffer) {
-            ESP_LOGE(TAG, "Failed to alloc out_buffer from SPIRAM");
-            heap_caps_free(in_buffer);
-            in_buffer = nullptr;
-            return false;
+        void reset_input() {
+            if (in_buffer) {
+                std::memset(in_buffer, 0, BLE_CONSOLE_MAX_PAYLOAD);
+            }
+            in_total_len = 0;
+            in_received = 0;
+            in_next_chunk_idx = 0;
         }
 
-        initialized = true;
-        ESP_LOGI(TAG, "BLE protocol buffers allocated from SPIRAM (32KB total)");
+        void reset_output() {
+            if (out_buffer) {
+                std::memset(out_buffer, 0, BLE_CONSOLE_MAX_PAYLOAD);
+            }
+            out_len = 0;
+            out_next_chunk_idx = 0;
+            out_has_response = false;
+            last_frame.reset();
+            last_frame_len = 0;
+        }
+
+        void store_last_frame(const uint8_t* frame, size_t len) {
+            last_frame = std::make_unique<uint8_t[]>(len);
+            std::memcpy(last_frame.get(), frame, len);
+            last_frame_len = len;
+        }
+    };
+
+    BleProtocolState proto;
+
+    // Ensure buffers are initialized before use
+    bool ensure_initialized() {
+        if (!proto.initialized) {
+            return proto.init();
+        }
         return true;
     }
-
-    void reset_input() {
-        if (in_buffer) {
-            std::memset(in_buffer, 0, BLE_CONSOLE_MAX_PAYLOAD);
-        }
-        in_total_len = 0;
-        in_received = 0;
-        in_next_chunk_idx = 0;
-    }
-
-    void reset_output() {
-        if (out_buffer) {
-            std::memset(out_buffer, 0, BLE_CONSOLE_MAX_PAYLOAD);
-        }
-        out_len = 0;
-        out_next_chunk_idx = 0;
-        out_has_response = false;
-        last_frame.reset();
-        last_frame_len = 0;
-    }
-
-    void store_last_frame(const uint8_t* frame, size_t len) {
-        last_frame = std::make_unique<uint8_t[]>(len);
-        std::memcpy(last_frame.get(), frame, len);
-        last_frame_len = len;
-    }
-};
-
-BleProtocolState proto;
-
-// Ensure buffers are initialized before use
-bool ensure_initialized() {
-    if (!proto.initialized) {
-        return proto.init();
-    }
-    return true;
-}
 
 }  // namespace
 
@@ -101,7 +101,8 @@ uint16_t ble_protocol_crc16(const uint8_t* data, size_t len) {
         for (uint8_t j = 0; j < 8; j++) {
             if (crc & 0x8000) {
                 crc = (crc << 1) ^ 0x1021;
-            } else {
+            }
+            else {
                 crc = crc << 1;
             }
         }
@@ -160,7 +161,7 @@ ble_receive_result_t ble_protocol_receive_chunk(const uint8_t* frame, size_t fra
 
     // Verify CRC
     uint16_t rx_crc = (static_cast<uint16_t>(frame[BLE_CONSOLE_FRAME_HEADER_SIZE + chunk_len]) << 8) |
-                      static_cast<uint16_t>(frame[BLE_CONSOLE_FRAME_HEADER_SIZE + chunk_len + 1]);
+        static_cast<uint16_t>(frame[BLE_CONSOLE_FRAME_HEADER_SIZE + chunk_len + 1]);
     uint16_t calc_crc = ble_protocol_crc16(frame + BLE_CONSOLE_FRAME_HEADER_SIZE, chunk_len);
 
     if (rx_crc != calc_crc) {
@@ -174,7 +175,8 @@ ble_receive_result_t ble_protocol_receive_chunk(const uint8_t* frame, size_t fra
         proto.reset_input();
         proto.in_total_len = total_len;
         proto.in_next_chunk_idx = 0;
-    } else {
+    }
+    else {
         // Validate chunk sequence
         if (chunk_idx != proto.in_next_chunk_idx) {
             ESP_LOGW(TAG, "chunk idx mismatch: expected %u got %u", proto.in_next_chunk_idx, chunk_idx);
@@ -201,7 +203,7 @@ ble_receive_result_t ble_protocol_receive_chunk(const uint8_t* frame, size_t fra
     proto.in_next_chunk_idx++;
 
     ESP_LOGD(TAG, "chunk %u: %u/%u bytes", chunk_idx,
-             static_cast<unsigned>(proto.in_received), static_cast<unsigned>(proto.in_total_len));
+        static_cast<unsigned>(proto.in_received), static_cast<unsigned>(proto.in_total_len));
 
     // Check if complete
     if (proto.in_received >= proto.in_total_len) {
@@ -298,7 +300,7 @@ uint8_t* ble_protocol_build_next_chunk(size_t* out_frame_len) {
     }
 
     ESP_LOGD(TAG, "built chunk %u: %u bytes, crc=0x%04X",
-             proto.out_next_chunk_idx - 1, static_cast<unsigned>(frame_size), crc);
+        proto.out_next_chunk_idx - 1, static_cast<unsigned>(frame_size), crc);
     return frame;
 }
 

@@ -22,7 +22,7 @@ static const char* TAG = "kd_crypto";
 
 // Global keygen mutex definition
 namespace crypto {
-SemaphoreHandle_t keygen_mutex = nullptr;
+    SemaphoreHandle_t keygen_mutex = nullptr;
 }
 
 using namespace crypto;
@@ -46,13 +46,14 @@ CryptoState_t kd_common_crypto_get_state() {
     }
 
     bool has_fuses = esp_efuse_get_key_purpose(get_ds_key_block()) ==
-                     ESP_EFUSE_KEY_PURPOSE_HMAC_DOWN_DIGITAL_SIGNATURE;
+        ESP_EFUSE_KEY_PURPOSE_HMAC_DOWN_DIGITAL_SIGNATURE;
 
     if (has_fuses) {
         esp_ds_data_ctx_t* ds_data_ctx = kd_common_crypto_get_ctx();
         if (ds_data_ctx == nullptr) {
             state = CRYPTO_STATE_BAD_DS_PARAMS;
-        } else {
+        }
+        else {
             free(ds_data_ctx->esp_ds_data);
             free(ds_data_ctx);
         }
@@ -113,7 +114,7 @@ esp_err_t store_ds_params(uint8_t* c, uint8_t* iv, uint8_t key_id, uint16_t rsa_
 
 bool crypto_will_generate_key() {
     bool has_fuses = esp_efuse_get_key_purpose(get_ds_key_block()) ==
-                     ESP_EFUSE_KEY_PURPOSE_HMAC_DOWN_DIGITAL_SIGNATURE;
+        ESP_EFUSE_KEY_PURPOSE_HMAC_DOWN_DIGITAL_SIGNATURE;
     return !has_fuses;
 }
 
@@ -131,7 +132,7 @@ esp_err_t kd_common_crypto_test_ds_signing() {
         return ESP_FAIL;
     }
     ESP_LOGI(TAG, "DS context loaded: key_id=%d, rsa_bits=%d",
-             ds_ctx->efuse_key_id, ds_ctx->rsa_length_bits);
+        ds_ctx->efuse_key_id, ds_ctx->rsa_length_bits);
 
     // Get device certificate
     size_t cert_len = 0;
@@ -191,7 +192,7 @@ esp_err_t kd_common_crypto_test_ds_signing() {
     const char* test_message = "DS peripheral test message for signature verification";
     unsigned char hash[32];
     mbedtls_sha256(reinterpret_cast<const unsigned char*>(test_message),
-                   strlen(test_message), hash, 0);
+        strlen(test_message), hash, 0);
     ESP_LOGI(TAG, "Test message hashed (SHA-256)");
 
     // Prepare padded message for DS signing (PKCS#1 v1.5 padding)
@@ -274,10 +275,10 @@ esp_err_t kd_common_crypto_test_ds_signing() {
 
     // Log first/last bytes of signature
     ESP_LOGI(TAG, "Signature (first 16 bytes): %02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x",
-             signature[0], signature[1], signature[2], signature[3],
-             signature[4], signature[5], signature[6], signature[7],
-             signature[8], signature[9], signature[10], signature[11],
-             signature[12], signature[13], signature[14], signature[15]);
+        signature[0], signature[1], signature[2], signature[3],
+        signature[4], signature[5], signature[6], signature[7],
+        signature[8], signature[9], signature[10], signature[11],
+        signature[12], signature[13], signature[14], signature[15]);
 
     // Verify signature using public key from certificate
     mbedtls_rsa_context* rsa = mbedtls_pk_rsa(crt.pk);
