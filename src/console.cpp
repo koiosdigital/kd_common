@@ -209,34 +209,46 @@ static void register_crypto_status(void)
 
 static int get_csr(int argc, char** argv)
 {
-    //base64 encode the CSR
-    char* csr = (char*)heap_caps_malloc(4096, MALLOC_CAP_SPIRAM);
-    if (csr == nullptr) {
-        console_out("{\"error_message\":\"alloc failed\",\"error\":true}\n");
-        return 0;
-    }
-    size_t len = 4096;
-    esp_err_t error = crypto_get_csr(csr, &len);
-    if (error != ESP_OK) {
-        heap_caps_free(csr);
+    // Get CSR length first
+    size_t csr_len = 0;
+    esp_err_t error = crypto_get_csr(nullptr, &csr_len);
+    if (error != ESP_OK || csr_len == 0) {
         console_out("{\"error_message\":\"no csr\",\"error\":true}\n");
         return 0;
     }
 
-    size_t encoded_len = 0;
-    char* encoded_csr = (char*)heap_caps_malloc(4096, MALLOC_CAP_SPIRAM);
-    if (encoded_csr == nullptr) {
-        heap_caps_free(csr);
+    // Allocate CSR buffer
+    char* csr = (char*)malloc(csr_len);
+    if (csr == nullptr) {
         console_out("{\"error_message\":\"alloc failed\",\"error\":true}\n");
         return 0;
     }
 
-    mbedtls_base64_encode((unsigned char*)encoded_csr, 4096, &encoded_len, (unsigned char*)csr, len);
-    heap_caps_free(csr);
+    error = crypto_get_csr(csr, &csr_len);
+    if (error != ESP_OK) {
+        free(csr);
+        console_out("{\"error_message\":\"no csr\",\"error\":true}\n");
+        return 0;
+    }
+
+    // Get required base64 encoded length
+    size_t encoded_len = 0;
+    mbedtls_base64_encode(nullptr, 0, &encoded_len, (unsigned char*)csr, csr_len);
+
+    // Allocate encoded buffer (+1 for null terminator)
+    char* encoded_csr = (char*)malloc(encoded_len + 1);
+    if (encoded_csr == nullptr) {
+        free(csr);
+        console_out("{\"error_message\":\"alloc failed\",\"error\":true}\n");
+        return 0;
+    }
+
+    mbedtls_base64_encode((unsigned char*)encoded_csr, encoded_len + 1, &encoded_len, (unsigned char*)csr, csr_len);
+    free(csr);
 
     console_out("{\"csr\":\"%s\",\"error\":false}\n", encoded_csr);
 
-    heap_caps_free(encoded_csr);
+    free(encoded_csr);
     return 0;
 }
 
@@ -258,8 +270,6 @@ static struct {
 
 static int set_device_cert(int argc, char** argv)
 {
-    constexpr size_t CERT_DECODE_BUFFER_SIZE = 12288;  // 12KB for fullchain
-
     int nerrors = arg_parse(argc, argv, (void**)&set_device_cert_args);
     if (nerrors != 0) {
         arg_print_errors(stderr, set_device_cert_args.end, argv[0]);
@@ -268,22 +278,32 @@ static int set_device_cert(int argc, char** argv)
 
     const char* cert_b64 = set_device_cert_args.cert->sval[0];
     size_t cert_len = strlen(cert_b64);
+
+    // Get required decoded length
     size_t decoded_len = 0;
-    char* decoded_cert = (char*)heap_caps_malloc(CERT_DECODE_BUFFER_SIZE, MALLOC_CAP_SPIRAM);
-    if (decoded_cert == NULL) {
-        ESP_LOGE(TAG, "failed to allocate buffer for decoded cert");
-        return 1;
-    }
-    memset(decoded_cert, 0, CERT_DECODE_BUFFER_SIZE);
-    mbedtls_base64_decode((unsigned char*)decoded_cert, CERT_DECODE_BUFFER_SIZE, &decoded_len, (unsigned char*)cert_b64, cert_len);
-    if (decoded_len == 0) {
-        ESP_LOGE(TAG, "failed to decode cert");
-        heap_caps_free(decoded_cert);
+    int ret = mbedtls_base64_decode(nullptr, 0, &decoded_len, (unsigned char*)cert_b64, cert_len);
+    if (ret != MBEDTLS_ERR_BASE64_BUFFER_TOO_SMALL || decoded_len == 0) {
+        ESP_LOGE(TAG, "failed to get decoded cert size");
         return 1;
     }
 
+    // Allocate decoded buffer (+1 for null terminator)
+    char* decoded_cert = (char*)malloc(decoded_len + 1);
+    if (decoded_cert == nullptr) {
+        ESP_LOGE(TAG, "failed to allocate buffer for decoded cert");
+        return 1;
+    }
+
+    ret = mbedtls_base64_decode((unsigned char*)decoded_cert, decoded_len + 1, &decoded_len, (unsigned char*)cert_b64, cert_len);
+    if (ret != 0) {
+        ESP_LOGE(TAG, "failed to decode cert");
+        free(decoded_cert);
+        return 1;
+    }
+    decoded_cert[decoded_len] = '\0';
+
     esp_err_t error = crypto_set_device_cert(decoded_cert, decoded_len);
-    heap_caps_free(decoded_cert);
+    free(decoded_cert);
     if (error != ESP_OK) {
         ESP_LOGE(TAG, "failed to set device cert");
         return 1;
@@ -320,7 +340,7 @@ static int get_device_cert(int argc, char** argv)
     }
 
     // Allocate and get cert
-    char* cert = (char*)heap_caps_malloc(cert_len + 1, MALLOC_CAP_SPIRAM);
+    char* cert = (char*)malloc(cert_len + 1);
     if (!cert) {
         console_out("{\"error\":true,\"message\":\"Memory allocation failed\"}\n");
         return 1;
@@ -328,14 +348,14 @@ static int get_device_cert(int argc, char** argv)
 
     err = kd_common_get_device_cert(cert, &cert_len);
     if (err != ESP_OK) {
-        heap_caps_free(cert);
+        free(cert);
         console_out("{\"error\":true,\"message\":\"Failed to read certificate\"}\n");
         return 1;
     }
     cert[cert_len] = '\0';
 
     console_out("%s\n", cert);
-    heap_caps_free(cert);
+    free(cert);
     return 0;
 }
 
@@ -358,7 +378,7 @@ static int get_ds_params(int argc, char** argv)
         return 1;
     }
     console_out("%s\n", json);
-    heap_caps_free(json);
+    free(json);
     return 0;
 }
 
@@ -556,8 +576,8 @@ static void register_get_version(void)
 }
 
 char* kd_common_run_command(char* input, int* return_code) {
-    // Allocate output buffer from SPIRAM
-    char* buffer = static_cast<char*>(heap_caps_calloc(OUTPUT_BUFFER_SIZE, 1, MALLOC_CAP_SPIRAM));
+    // Allocate output buffer
+    char* buffer = static_cast<char*>(calloc(OUTPUT_BUFFER_SIZE, 1));
     if (!buffer) {
         ESP_LOGE(TAG, "failed to allocate output buffer");
         return nullptr;

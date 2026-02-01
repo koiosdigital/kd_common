@@ -250,14 +250,14 @@ esp_err_t crypto_storage_store_ds_params(const uint8_t* c, const uint8_t* iv, ui
 
 esp_ds_data_ctx_t* crypto_storage_get_ds_ctx() {
     auto* ds_data_ctx = static_cast<esp_ds_data_ctx_t*>(
-        heap_caps_calloc(1, sizeof(esp_ds_data_ctx_t), MALLOC_CAP_SPIRAM));
+        calloc(1, sizeof(esp_ds_data_ctx_t)));
     if (ds_data_ctx == nullptr) {
         ESP_LOGE(TAG, "no mem for ds context");
         return nullptr;
     }
 
     ds_data_ctx->esp_ds_data = static_cast<esp_ds_data_t*>(
-        heap_caps_calloc(1, sizeof(esp_ds_data_t), MALLOC_CAP_SPIRAM));
+        calloc(1, sizeof(esp_ds_data_t)));
     if (ds_data_ctx->esp_ds_data == nullptr) {
         ESP_LOGE(TAG, "no mem for ds data");
         free(ds_data_ctx);
@@ -325,16 +325,22 @@ char* crypto_get_ds_params_json() {
     cJSON_AddNumberToObject(json, "ds_key_id", ds_data_ctx->efuse_key_id + 4);
     cJSON_AddNumberToObject(json, "rsa_len", ds_data_ctx->esp_ds_data->rsa_length);
 
-    char* base64_c = static_cast<char*>(malloc(4096));
+    // Get required base64 size for cipher_c
     size_t base64_c_len = 0;
-    mbedtls_base64_encode(reinterpret_cast<unsigned char*>(base64_c), 4096, &base64_c_len,
+    mbedtls_base64_encode(nullptr, 0, &base64_c_len,
+        reinterpret_cast<unsigned char*>(ds_data_ctx->esp_ds_data->c), ESP_DS_C_LEN);
+    char* base64_c = static_cast<char*>(malloc(base64_c_len + 1));
+    mbedtls_base64_encode(reinterpret_cast<unsigned char*>(base64_c), base64_c_len + 1, &base64_c_len,
         reinterpret_cast<unsigned char*>(ds_data_ctx->esp_ds_data->c), ESP_DS_C_LEN);
     cJSON_AddStringToObject(json, "cipher_c", base64_c);
     free(base64_c);
 
-    char* base64_iv = static_cast<char*>(malloc(4096));
+    // Get required base64 size for iv
     size_t base64_iv_len = 0;
-    mbedtls_base64_encode(reinterpret_cast<unsigned char*>(base64_iv), 4096, &base64_iv_len,
+    mbedtls_base64_encode(nullptr, 0, &base64_iv_len,
+        reinterpret_cast<unsigned char*>(ds_data_ctx->esp_ds_data->iv), ESP_DS_IV_LEN);
+    char* base64_iv = static_cast<char*>(malloc(base64_iv_len + 1));
+    mbedtls_base64_encode(reinterpret_cast<unsigned char*>(base64_iv), base64_iv_len + 1, &base64_iv_len,
         reinterpret_cast<unsigned char*>(ds_data_ctx->esp_ds_data->iv), ESP_DS_IV_LEN);
     cJSON_AddStringToObject(json, "iv", base64_iv);
     free(base64_iv);

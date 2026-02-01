@@ -144,7 +144,7 @@ esp_err_t kd_common_crypto_test_ds_signing() {
         return ESP_FAIL;
     }
 
-    char* cert_pem = static_cast<char*>(heap_caps_calloc(cert_len + 1, 1, MALLOC_CAP_SPIRAM));
+    char* cert_pem = static_cast<char*>(calloc(cert_len + 1, 1));
     if (cert_pem == nullptr) {
         ESP_LOGE(TAG, "Failed to allocate cert buffer");
         free(ds_ctx->esp_ds_data);
@@ -155,7 +155,7 @@ esp_err_t kd_common_crypto_test_ds_signing() {
     ret = kd_common_get_device_cert(cert_pem, &cert_len);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to get cert: %s", esp_err_to_name(ret));
-        heap_caps_free(cert_pem);
+        free(cert_pem);
         free(ds_ctx->esp_ds_data);
         free(ds_ctx);
         return ret;
@@ -167,7 +167,7 @@ esp_err_t kd_common_crypto_test_ds_signing() {
     mbedtls_x509_crt_init(&crt);
 
     int mbret = mbedtls_x509_crt_parse(&crt, reinterpret_cast<const unsigned char*>(cert_pem), cert_len + 1);
-    heap_caps_free(cert_pem);
+    free(cert_pem);
 
     if (mbret != 0) {
         ESP_LOGE(TAG, "Failed to parse certificate: -0x%04X", -mbret);

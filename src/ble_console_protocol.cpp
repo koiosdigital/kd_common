@@ -4,23 +4,23 @@
 #include <memory>
 
 #include <esp_log.h>
-#include <esp_heap_caps.h>
 
 static const char* TAG = "ble_proto";
 
 namespace {
 
     // BLE protocol state encapsulation
-    // Buffers are allocated from SPIRAM to save internal RAM
+    // Single shared buffer for request/response (no overlap in usage)
     struct BleProtocolState {
-        // Input reassembly state (allocated from SPIRAM)
-        uint8_t* in_buffer = nullptr;
+        // Shared buffer for input reassembly and output chunking
+        uint8_t* buffer = nullptr;
+
+        // Input state
         size_t in_total_len = 0;
         size_t in_received = 0;
         uint8_t in_next_chunk_idx = 0;
 
-        // Output chunking state (allocated from SPIRAM)
-        uint8_t* out_buffer = nullptr;
+        // Output state
         size_t out_len = 0;
         uint8_t out_next_chunk_idx = 0;
         bool out_has_response = false;
@@ -34,30 +34,20 @@ namespace {
         bool init() {
             if (initialized) return true;
 
-            in_buffer = static_cast<uint8_t*>(
-                heap_caps_calloc(BLE_CONSOLE_MAX_PAYLOAD, 1, MALLOC_CAP_SPIRAM));
-            if (!in_buffer) {
-                ESP_LOGE(TAG, "Failed to alloc in_buffer from SPIRAM");
-                return false;
-            }
-
-            out_buffer = static_cast<uint8_t*>(
-                heap_caps_calloc(BLE_CONSOLE_MAX_PAYLOAD, 1, MALLOC_CAP_SPIRAM));
-            if (!out_buffer) {
-                ESP_LOGE(TAG, "Failed to alloc out_buffer from SPIRAM");
-                heap_caps_free(in_buffer);
-                in_buffer = nullptr;
+            buffer = static_cast<uint8_t*>(calloc(BLE_CONSOLE_MAX_PAYLOAD, 1));
+            if (!buffer) {
+                ESP_LOGE(TAG, "Failed to alloc buffer from internal RAM");
                 return false;
             }
 
             initialized = true;
-            ESP_LOGI(TAG, "BLE protocol buffers allocated from SPIRAM (32KB total)");
+            ESP_LOGI(TAG, "BLE protocol buffer allocated from internal RAM (16KB)");
             return true;
         }
 
         void reset_input() {
-            if (in_buffer) {
-                std::memset(in_buffer, 0, BLE_CONSOLE_MAX_PAYLOAD);
+            if (buffer) {
+                std::memset(buffer, 0, BLE_CONSOLE_MAX_PAYLOAD);
             }
             in_total_len = 0;
             in_received = 0;
@@ -65,9 +55,6 @@ namespace {
         }
 
         void reset_output() {
-            if (out_buffer) {
-                std::memset(out_buffer, 0, BLE_CONSOLE_MAX_PAYLOAD);
-            }
             out_len = 0;
             out_next_chunk_idx = 0;
             out_has_response = false;
@@ -198,7 +185,7 @@ ble_receive_result_t ble_protocol_receive_chunk(const uint8_t* frame, size_t fra
     }
 
     // Copy payload
-    std::memcpy(proto.in_buffer + proto.in_received, frame + BLE_CONSOLE_FRAME_HEADER_SIZE, chunk_len);
+    std::memcpy(proto.buffer + proto.in_received, frame + BLE_CONSOLE_FRAME_HEADER_SIZE, chunk_len);
     proto.in_received += chunk_len;
     proto.in_next_chunk_idx++;
 
@@ -213,7 +200,7 @@ ble_receive_result_t ble_protocol_receive_chunk(const uint8_t* frame, size_t fra
 }
 
 const uint8_t* ble_protocol_get_input_data(void) {
-    return proto.in_buffer;
+    return proto.buffer;
 }
 
 size_t ble_protocol_get_input_len(void) {
@@ -231,7 +218,8 @@ void ble_protocol_set_output(const uint8_t* data, size_t len) {
         return;
     }
 
-    std::memcpy(proto.out_buffer, data, len);
+    // Use memmove to handle case where data points into shared buffer
+    std::memmove(proto.buffer, data, len);
     proto.out_len = len;
     proto.out_next_chunk_idx = 0;
     proto.out_has_response = true;
@@ -279,7 +267,7 @@ uint8_t* ble_protocol_build_next_chunk(size_t* out_frame_len) {
     frame[5] = static_cast<uint8_t>(chunk_payload_size & 0xFF);
 
     // Payload
-    std::memcpy(frame + BLE_CONSOLE_FRAME_HEADER_SIZE, proto.out_buffer + offset, chunk_payload_size);
+    std::memcpy(frame + BLE_CONSOLE_FRAME_HEADER_SIZE, proto.buffer + offset, chunk_payload_size);
 
     // CRC on payload only
     uint16_t crc = ble_protocol_crc16(frame + BLE_CONSOLE_FRAME_HEADER_SIZE, chunk_payload_size);

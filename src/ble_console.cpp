@@ -7,7 +7,6 @@
 
 #include <esp_log.h>
 #include <esp_system.h>
-#include <esp_heap_caps.h>
 
 #include "kd/v1/console.pb-c.h"
 #include "kd/v1/common.pb-c.h"
@@ -22,8 +21,6 @@ static const char* TAG = "ble_console";
 
 
 #ifndef KD_COMMON_CRYPTO_DISABLE
-static constexpr size_t BLE_CONSOLE_PEM_BUFFER_SIZE = 12288;  // 12KB for fullchain
-
 static uint8_t crypto_retry_count = 0;
 static constexpr uint8_t CRYPTO_MAX_RETRIES = 3;
 #endif
@@ -105,23 +102,33 @@ static void handle_request(const Kd__V1__ConsoleMessage* req) {
         get_csr_resp.csr_pem.data = NULL;
         get_csr_resp.csr_pem.len = 0;
 
-        uint8_t* csr_buf = (uint8_t*)heap_caps_malloc(BLE_CONSOLE_PEM_BUFFER_SIZE, MALLOC_CAP_SPIRAM);
-        if (csr_buf == NULL) {
-            result.error_code = ESP_ERR_NO_MEM;
-            result.detail = (char*)"no mem";
+        // Get CSR length first
+        size_t csr_len = 0;
+        esp_err_t err = crypto_get_csr(nullptr, &csr_len);
+        uint8_t* csr_buf = nullptr;
+
+        if (err != ESP_OK || csr_len == 0) {
+            result.error_code = err;
+            result.detail = (char*)"no csr";
         }
         else {
-            size_t csr_len = BLE_CONSOLE_PEM_BUFFER_SIZE;
-            esp_err_t err = crypto_get_csr((char*)csr_buf, &csr_len);
-            if (err == ESP_OK) {
-                result.success = true;
-                result.detail = (char*)"ok";
-                get_csr_resp.csr_pem.data = csr_buf;
-                get_csr_resp.csr_pem.len = csr_len;
+            csr_buf = (uint8_t*)malloc(csr_len);
+            if (csr_buf == nullptr) {
+                result.error_code = ESP_ERR_NO_MEM;
+                result.detail = (char*)"no mem";
             }
             else {
-                result.error_code = err;
-                result.detail = (char*)"no csr";
+                err = crypto_get_csr((char*)csr_buf, &csr_len);
+                if (err == ESP_OK) {
+                    result.success = true;
+                    result.detail = (char*)"ok";
+                    get_csr_resp.csr_pem.data = csr_buf;
+                    get_csr_resp.csr_pem.len = csr_len;
+                }
+                else {
+                    result.error_code = err;
+                    result.detail = (char*)"no csr";
+                }
             }
         }
 
@@ -129,7 +136,7 @@ static void handle_request(const Kd__V1__ConsoleMessage* req) {
         resp.payload_case = KD__V1__CONSOLE_MESSAGE__PAYLOAD_GET_CSR_RESPONSE;
         resp.get_csr_response = &get_csr_resp;
         prepare_response(&resp);
-        heap_caps_free(csr_buf);
+        free(csr_buf);
         break;
     }
 
@@ -172,23 +179,33 @@ static void handle_request(const Kd__V1__ConsoleMessage* req) {
         get_cert_resp.cert_pem.data = NULL;
         get_cert_resp.cert_pem.len = 0;
 
-        uint8_t* cert_buf = (uint8_t*)heap_caps_malloc(BLE_CONSOLE_PEM_BUFFER_SIZE, MALLOC_CAP_SPIRAM);
-        if (cert_buf == NULL) {
-            result.error_code = ESP_ERR_NO_MEM;
-            result.detail = (char*)"no mem";
+        // Get cert length first
+        size_t cert_len = 0;
+        esp_err_t err = kd_common_get_device_cert(nullptr, &cert_len);
+        uint8_t* cert_buf = nullptr;
+
+        if (err != ESP_OK || cert_len == 0) {
+            result.error_code = err;
+            result.detail = (char*)"no cert";
         }
         else {
-            size_t cert_len = BLE_CONSOLE_PEM_BUFFER_SIZE;
-            esp_err_t err = kd_common_get_device_cert((char*)cert_buf, &cert_len);
-            if (err == ESP_OK) {
-                result.success = true;
-                result.detail = (char*)"ok";
-                get_cert_resp.cert_pem.data = cert_buf;
-                get_cert_resp.cert_pem.len = cert_len;
+            cert_buf = (uint8_t*)malloc(cert_len);
+            if (cert_buf == nullptr) {
+                result.error_code = ESP_ERR_NO_MEM;
+                result.detail = (char*)"no mem";
             }
             else {
-                result.error_code = err;
-                result.detail = (char*)"no cert";
+                err = kd_common_get_device_cert((char*)cert_buf, &cert_len);
+                if (err == ESP_OK) {
+                    result.success = true;
+                    result.detail = (char*)"ok";
+                    get_cert_resp.cert_pem.data = cert_buf;
+                    get_cert_resp.cert_pem.len = cert_len;
+                }
+                else {
+                    result.error_code = err;
+                    result.detail = (char*)"no cert";
+                }
             }
         }
 
@@ -196,7 +213,7 @@ static void handle_request(const Kd__V1__ConsoleMessage* req) {
         resp.payload_case = KD__V1__CONSOLE_MESSAGE__PAYLOAD_GET_DEVICE_CERT_RESPONSE;
         resp.get_device_cert_response = &get_cert_resp;
         prepare_response(&resp);
-        heap_caps_free(cert_buf);
+        free(cert_buf);
         break;
     }
 
