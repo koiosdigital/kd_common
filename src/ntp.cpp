@@ -246,17 +246,6 @@ void ntp_init() {
     if (g_initialized) return;
     g_initialized = true;
 
-    // TODO: Remove after deployment - clear old NVS config due to struct layout change
-    {
-        nvs_handle_t h;
-        if (nvs_open("ntp_cfg", NVS_READWRITE, &h) == ESP_OK) {
-            nvs_erase_all(h);
-            nvs_commit(h);
-            nvs_close(h);
-            ESP_LOGW(TAG, "Cleared old NVS config");
-        }
-    }
-
     // Load configuration from NVS
     load_config_from_nvs();
 
