@@ -1,11 +1,11 @@
 #pragma once
 
+#include "sdkconfig.h"
+
 #include <esp_ds.h>
 #include <esp_efuse.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
-
-#include "mbedtls/rsa.h"
 
 #include "kd_common.h"  // for esp_ds_data_ctx_t
 
@@ -48,7 +48,7 @@ esp_ds_data_ctx_t* crypto_storage_get_ds_ctx();
 
 // Internal functions - crypto_keygen.cpp
 void keygen_task(void* pvParameter);
-void calculate_rinv_mprime(mbedtls_mpi* N, mbedtls_mpi* rinv, uint32_t* mprime);
-void rinv_mprime_to_ds_params(mbedtls_mpi* D, mbedtls_mpi* N, mbedtls_mpi* rinv, uint32_t mprime, esp_ds_p_data_t* params);
-esp_err_t store_csr(mbedtls_rsa_context* rsa);
+//void calculate_rinv_mprime(mbedtls_mpi* N, mbedtls_mpi* rinv, uint32_t* mprime);
+//void rinv_mprime_to_ds_params(mbedtls_mpi* D, mbedtls_mpi* N, mbedtls_mpi* rinv, uint32_t mprime, esp_ds_p_data_t* params);
+//esp_err_t store_csr(mbedtls_rsa_context* rsa);
 esp_err_t ensure_key_exists();

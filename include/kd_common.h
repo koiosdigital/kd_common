@@ -1,16 +1,17 @@
 #pragma once
 
+#include "stdlib.h"
+#include "esp_err.h"
+#include "esp_event.h"
+#include "sdkconfig.h"
+
 #ifdef CONFIG_KD_COMMON_CRYPTO_ENABLE
 #include "esp_ds.h"
 #endif
 
 #ifdef CONFIG_KD_COMMON_API_ENABLE
-#include "esp_http_server.h"
+#include <esp_http_server.h>
 #endif
-
-#include "stdlib.h"
-#include "esp_err.h"
-#include "esp_event.h"
 
 #ifdef __cplusplus
 extern "C" {

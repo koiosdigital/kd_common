@@ -24,8 +24,6 @@ namespace {
         bool prov_cred_failed = false;
         ProvisioningSRPPasswordFormat_t srp_format = ProvisioningSRPPasswordFormat_t::STATIC;
         char srp_password[16] = { 0x00 };
-        char srp_salt[16] = { 0x00 };
-        char srp_verifier[384] = { 0x00 };
         network_prov_security2_params_t srp_params = { 0 };
     };
 
@@ -67,37 +65,34 @@ namespace {
         char* srp_password = kd_common_provisioning_get_srp_password();
 
         const char* username = "koiosdigital";
+        constexpr int salt_len = 16;
         char* salt_out = nullptr;
         char* verifier_out = nullptr;
         int verifier_len = 0;
 
         ret = esp_srp_gen_salt_verifier(username, strlen(username),
             srp_password, strlen(srp_password),
-            &salt_out, sizeof(state.srp_salt),
+            &salt_out, salt_len,
             &verifier_out, &verifier_len);
-        if (ret == ESP_OK && salt_out && verifier_out) {
-            memcpy(state.srp_salt, salt_out, sizeof(state.srp_salt));
-            size_t copy_len = (static_cast<size_t>(verifier_len) < sizeof(state.srp_verifier))
-                ? static_cast<size_t>(verifier_len)
-                : sizeof(state.srp_verifier);
-            memcpy(state.srp_verifier, verifier_out, copy_len);
+        if (ret != ESP_OK || !salt_out || !verifier_out) {
+            ESP_LOGE(TAG, "Failed to generate SRP salt/verifier: %s", esp_err_to_name(ret));
             free(salt_out);
             free(verifier_out);
-        }
-        else {
-            ESP_LOGE(TAG, "Failed to generate SRP salt/verifier: %s", esp_err_to_name(ret));
             network_prov_mgr_deinit();
             return;
         }
 
-        state.srp_params.salt = state.srp_salt;
-        state.srp_params.salt_len = sizeof(state.srp_salt);
-        state.srp_params.verifier = state.srp_verifier;
-        state.srp_params.verifier_len = sizeof(state.srp_verifier);
+        state.srp_params.salt = salt_out;
+        state.srp_params.salt_len = salt_len;
+        state.srp_params.verifier = verifier_out;
+        state.srp_params.verifier_len = verifier_len;
 
         ret = network_prov_mgr_start_provisioning(NETWORK_PROV_SECURITY_2, &state.srp_params, kd_common_get_device_name(), nullptr);
         if (ret != ESP_OK) {
             ESP_LOGE(TAG, "Failed to start prov: %s", esp_err_to_name(ret));
+            free(const_cast<char*>(state.srp_params.salt));
+            free(const_cast<char*>(state.srp_params.verifier));
+            state.srp_params = { 0 };
             network_prov_mgr_deinit();
             return;
         }
@@ -145,6 +140,9 @@ namespace {
             case NETWORK_PROV_END:
                 ESP_LOGI(TAG, "Provisioning ended");
                 network_prov_mgr_deinit();  // This frees BT memory via scheme handler
+                free(const_cast<char*>(state.srp_params.salt));
+                free(const_cast<char*>(state.srp_params.verifier));
+                state.srp_params = { 0 };
                 state.provisioning_started = false;
                 break;
             }

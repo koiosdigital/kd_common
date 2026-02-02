@@ -1,5 +1,7 @@
 #pragma once
 
+#include "sdkconfig.h"
+
 #ifdef CONFIG_KD_COMMON_API_ENABLE
 
 #include "esp_http_server.h"

@@ -13,10 +13,9 @@
 #include <esp_task_wdt.h>
 #include <esp_ds.h>
 
-#include "mbedtls/rsa.h"
+#include "psa/crypto.h"
+#include "mbedtls/bignum.h"
 #include "mbedtls/x509_csr.h"
-#include "mbedtls/entropy.h"
-#include "mbedtls/ctr_drbg.h"
 
 #include <cstring>
 #include <memory>
@@ -27,40 +26,43 @@ static const char* TAG = "kd_crypto_keygen";
 
 using namespace crypto;
 
+//pvParameter is ptr to psa_key_id_t
 void keygen_task(void* pvParameter) {
-    auto* rsa = static_cast<mbedtls_rsa_context*>(pvParameter);
+    psa_key_id_t* key_id = static_cast<psa_key_id_t*>(pvParameter);
     xSemaphoreTake(keygen_mutex, portMAX_DELAY);
 
     ESP_LOGD(TAG, "generating key");
 
-    mbedtls_entropy_context entropy;
-    mbedtls_ctr_drbg_context ctr_drbg;
-    mbedtls_entropy_init(&entropy);
-    mbedtls_ctr_drbg_init(&ctr_drbg);
-
     esp_task_wdt_config_t twdt_config = {
-        .timeout_ms = 1000 * 60 * 2,  // 2 minutes
+        .timeout_ms = 1000 * 60,  // 1 minute
         .idle_core_mask = static_cast<uint32_t>((1 << portNUM_PROCESSORS) - 1),
         .trigger_panic = true,
     };
     esp_task_wdt_reconfigure(&twdt_config);
 
-    mbedtls_ctr_drbg_seed(&ctr_drbg, mbedtls_entropy_func, &entropy, nullptr, 0);
-    mbedtls_rsa_gen_key(rsa, mbedtls_ctr_drbg_random, &ctr_drbg, KEY_SIZE, 65537);
-    mbedtls_rsa_complete(rsa);
+    psa_key_attributes_t attributes = PSA_KEY_ATTRIBUTES_INIT;
+    psa_set_key_usage_flags(&attributes,
+        PSA_KEY_USAGE_SIGN_HASH | PSA_KEY_USAGE_VERIFY_HASH |
+        PSA_KEY_USAGE_EXPORT);
+    psa_set_key_algorithm(&attributes, PSA_ALG_RSA_PKCS1V15_SIGN(PSA_ALG_SHA_256));
+    psa_set_key_type(&attributes, PSA_KEY_TYPE_RSA_KEY_PAIR);
+    psa_set_key_bits(&attributes, 3072);
 
-    ESP_LOGD(TAG, "key generated");
+    psa_status_t status = psa_generate_key(&attributes, key_id);
+    if (status != PSA_SUCCESS) {
+        ESP_LOGE(TAG, "Failed to generate key: %d", status);
+    };
+
+    ESP_LOGI(TAG, "key generated");
 
     twdt_config.timeout_ms = 5000;
     esp_task_wdt_reconfigure(&twdt_config);
-
-    mbedtls_ctr_drbg_free(&ctr_drbg);
-    mbedtls_entropy_free(&entropy);
     xSemaphoreGive(keygen_mutex);
 
     vTaskDelete(nullptr);
 }
 
+/*
 void calculate_rinv_mprime(mbedtls_mpi* N, mbedtls_mpi* rinv, uint32_t* mprime) {
     mbedtls_mpi rr, ls32, a;
     mbedtls_mpi_init(&rr);
@@ -153,6 +155,7 @@ esp_err_t store_csr(mbedtls_rsa_context* rsa) {
 
     return crypto_storage_store_csr(csr_buffer.get(), std::strlen(reinterpret_cast<char*>(csr_buffer.get())));
 }
+*/
 
 esp_err_t ensure_key_exists() {
     keygen_mutex = xSemaphoreCreateBinary();
@@ -164,26 +167,13 @@ esp_err_t ensure_key_exists() {
 
     if (has_fuses) {
         ESP_LOGI(TAG, "skipping keygen, key already burnt to block: %d", (ds_key_block - 4));
-        return ESP_OK;
+        //return ESP_OK;
     }
 
-    mbedtls_mpi rinv;
-    mbedtls_rsa_context rsa;
-    mbedtls_rsa_init(&rsa);
-    mbedtls_mpi_init(&rinv);
-
-    // RAII cleanup for mbedtls resources
-    struct MbedCleanup {
-        mbedtls_rsa_context* rsa;
-        mbedtls_mpi* rinv;
-        ~MbedCleanup() {
-            mbedtls_rsa_free(rsa);
-            mbedtls_mpi_free(rinv);
-        }
-    } mbed_cleanup{ &rsa, &rinv };
+    psa_key_id_t key_id = 0;
 
     // Generate RSA keypair on APP_CPU
-    xTaskCreatePinnedToCore(keygen_task, "keygen_task", 8192, &rsa, 5, nullptr, 1);
+    xTaskCreatePinnedToCore(keygen_task, "keygen_task", 8192, &key_id, 5, nullptr, 1);
 
     vTaskDelay(pdMS_TO_TICKS(1000));
 
@@ -191,6 +181,16 @@ esp_err_t ensure_key_exists() {
         ESP_LOGI(TAG, "keygen_task still running");
     }
 
+    /* 5. (Optional) Export the full keypair (if PSA_KEY_USAGE_EXPORT was set) */
+    uint8_t key_buf[PSA_EXPORT_KEY_OUTPUT_SIZE(PSA_KEY_TYPE_RSA_KEY_PAIR, 3072)];
+    size_t key_len;
+    psa_status_t status = psa_export_key(key_id, key_buf, sizeof(key_buf), &key_len);
+
+    ESP_LOG_BUFFER_HEXDUMP(TAG, key_buf, key_len, ESP_LOG_INFO);
+
+    return ESP_OK;
+
+    /*
     uint32_t mprime = 0;
     calculate_rinv_mprime(&rsa.private_N, &rinv, &mprime);
 
@@ -233,6 +233,7 @@ esp_err_t ensure_key_exists() {
     esp_efuse_set_read_protect(ds_key_block);
 
     return ESP_OK;
+    */
 }
 
 #endif // CONFIG_KD_COMMON_CRYPTO_ENABLE

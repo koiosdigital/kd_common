@@ -1,6 +1,7 @@
+#include "api.h"
+
 #ifdef CONFIG_KD_COMMON_API_ENABLE
 
-#include "api.h"
 #include "kdmdns.h"
 #include "kd_common.h"
 #include "esp_http_server.h"

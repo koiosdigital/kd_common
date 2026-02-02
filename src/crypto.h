@@ -1,5 +1,7 @@
 #pragma once
 
+#include "sdkconfig.h"
+
 #include <esp_err.h>
 
 #define NVS_CRYPTO_NAMESPACE "secure_crypto"

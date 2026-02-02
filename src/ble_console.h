@@ -1,5 +1,7 @@
 #pragma once
 
+#include "sdkconfig.h"
+
 #include <esp_err.h>
 
 #define BLE_CONSOLE_ENDPOINT_NAME "kd_console"
