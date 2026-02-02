@@ -18,6 +18,7 @@ static void server_init() {
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.max_uri_handlers = 60;
     config.uri_match_fn = httpd_uri_match_wildcard;
+    config.stack_size = 12288;  // Needs 12KB for handlers with large buffers + ESP_LOG calls
     httpd_start(&kd_api_server, &config);
 }
 
