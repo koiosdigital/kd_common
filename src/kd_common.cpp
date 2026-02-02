@@ -11,7 +11,7 @@
 #include "ntp.h"
 #include "embedded_tz_db.h"
 #include "kdmdns.h"
-#ifndef KD_COMMON_API_DISABLE
+#ifdef CONFIG_KD_COMMON_API_ENABLE
 #include "api.h"
 #endif
 
@@ -27,11 +27,11 @@ void kd_common_init() {
         ret = nvs_flash_init();
     }
 
-#ifndef KD_COMMON_CONSOLE_DISABLE
+#ifdef CONFIG_KD_COMMON_CONSOLE_ENABLE
     console_init();
 #endif
 
-#ifndef KD_COMMON_CRYPTO_DISABLE
+#ifdef CONFIG_KD_COMMON_CRYPTO_ENABLE
     crypto_init();
 #endif
 
@@ -45,7 +45,7 @@ void kd_common_init() {
 
     kdmdns_init();
 
-#ifndef KD_COMMON_API_DISABLE
+#ifdef CONFIG_KD_COMMON_API_ENABLE
     api_init();
 #endif
 }
@@ -68,7 +68,7 @@ void kd_common_check_ota() {
 }
 #endif
 
-#ifndef KD_COMMON_CRYPTO_DISABLE
+#ifdef CONFIG_KD_COMMON_CRYPTO_ENABLE
 bool kd_common_crypto_will_generate_key() {
     return crypto_will_generate_key();
 }
@@ -129,7 +129,7 @@ void kd_common_set_device_info(const char* model, const char* type) {
 }
 
 // API functions
-#ifndef KD_COMMON_API_DISABLE
+#ifdef CONFIG_KD_COMMON_API_ENABLE
 httpd_handle_t kd_common_api_get_httpd_handle() {
     return api_get_httpd_handle();
 }

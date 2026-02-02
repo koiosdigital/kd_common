@@ -18,7 +18,7 @@
 #define DS_KEY_BLOCK_MAX 9
 #define DS_KEY_BLOCK_DEFAULT 7  // EFUSE_BLK_KEY3
 
-#ifndef KD_COMMON_CRYPTO_DISABLE
+#ifdef CONFIG_KD_COMMON_CRYPTO_ENABLE
 
 esp_err_t crypto_init();
 esp_err_t crypto_get_csr(char* buffer, size_t* len);

@@ -1,6 +1,6 @@
 #include "console.h"
 
-#ifndef KD_COMMON_CONSOLE_DISABLE
+#ifdef CONFIG_KD_COMMON_CONSOLE_ENABLE
 
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
@@ -189,7 +189,7 @@ static void register_task_dump(void)
 }
 #endif // CONFIG_FREERTOS_USE_TRACE_FACILITY
 
-#ifndef KD_COMMON_CRYPTO_DISABLE
+#ifdef CONFIG_KD_COMMON_CRYPTO_ENABLE
 static int crypto_status(int argc, char** argv)
 {
     console_out("{\"status\":%i,\"error\":false}\n", kd_common_crypto_get_state());
@@ -326,9 +326,9 @@ static void register_set_device_cert(void)
     };
     ESP_ERROR_CHECK(esp_console_cmd_register(&cmd));
 }
-#endif // KD_COMMON_CRYPTO_DISABLE
+#endif // CONFIG_KD_COMMON_CRYPTO_ENABLE
 
-#ifndef KD_COMMON_CRYPTO_DISABLE
+#ifdef CONFIG_KD_COMMON_CRYPTO_ENABLE
 static int get_device_cert(int argc, char** argv)
 {
     // Get cert length first
@@ -527,7 +527,7 @@ static void register_check_key_blocks(void)
     };
     ESP_ERROR_CHECK(esp_console_cmd_register(&cmd));
 }
-#endif // KD_COMMON_CRYPTO_DISABLE
+#endif // CONFIG_KD_COMMON_CRYPTO_ENABLE
 
 static int assert_crash(int argc, char** argv)
 {
@@ -635,7 +635,7 @@ void console_init() {
     register_task_dump();
 #endif
 
-#ifndef KD_COMMON_CRYPTO_DISABLE
+#ifdef CONFIG_KD_COMMON_CRYPTO_ENABLE
     register_crypto_status();
     register_get_csr();
     register_set_device_cert();
@@ -656,4 +656,4 @@ void console_init() {
     ESP_ERROR_CHECK(esp_console_start_repl(repl));
 }
 
-#endif // KD_COMMON_CONSOLE_DISABLE
+#endif // CONFIG_KD_COMMON_CONSOLE_ENABLE

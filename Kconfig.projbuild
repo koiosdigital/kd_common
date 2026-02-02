@@ -1,0 +1,33 @@
+menu "KD Common Configuration"
+
+    config KD_COMMON_DEVICE_NAME_PREFIX
+        string "Device name prefix"
+        default "KDCOMMON"
+        help
+            Prefix used for generating the device name. The full device name
+            will be PREFIX-XXXXXXXXXXXX where X is the MAC address in hex.
+
+    config KD_COMMON_CRYPTO_ENABLE
+        bool "Enable crypto/certificate functionality"
+        default y
+        depends on SOC_DIG_SIGN_SUPPORTED
+        help
+            Enable cryptographic functionality including device certificates,
+            CSR generation, and DS peripheral signing. Requires DS peripheral
+            support on the target chip.
+
+    config KD_COMMON_API_ENABLE
+        bool "Enable HTTP API server"
+        default y
+        help
+            Enable the built-in HTTP API server for device control and
+            status endpoints.
+
+    config KD_COMMON_CONSOLE_ENABLE
+        bool "Enable console commands"
+        default y
+        help
+            Enable console command registration and execution via UART
+            and BLE provisioning endpoints.
+
+endmenu

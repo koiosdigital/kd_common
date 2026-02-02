@@ -1,6 +1,6 @@
 #include "crypto.h"
 
-#ifndef KD_COMMON_CRYPTO_DISABLE
+#ifdef CONFIG_KD_COMMON_CRYPTO_ENABLE
 
 #include "crypto_internal.h"
 
@@ -235,4 +235,4 @@ esp_err_t ensure_key_exists() {
     return ESP_OK;
 }
 
-#endif // KD_COMMON_CRYPTO_DISABLE
+#endif // CONFIG_KD_COMMON_CRYPTO_ENABLE

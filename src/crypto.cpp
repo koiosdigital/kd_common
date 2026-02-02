@@ -1,6 +1,6 @@
 #include "crypto.h"
 
-#ifndef KD_COMMON_CRYPTO_DISABLE
+#ifdef CONFIG_KD_COMMON_CRYPTO_ENABLE
 
 #include "crypto_internal.h"
 
@@ -300,4 +300,4 @@ esp_err_t kd_common_crypto_test_ds_signing() {
     return ESP_OK;
 }
 
-#endif // KD_COMMON_CRYPTO_DISABLE
+#endif // CONFIG_KD_COMMON_CRYPTO_ENABLE

@@ -1,4 +1,4 @@
-#ifndef KD_COMMON_API_DISABLE
+#ifdef CONFIG_KD_COMMON_API_ENABLE
 
 #include "api.h"
 #include "kdmdns.h"
@@ -294,4 +294,4 @@ httpd_handle_t api_get_httpd_handle() {
     return kd_api_server;
 }
 
-#endif // KD_COMMON_API_DISABLE
+#endif // CONFIG_KD_COMMON_API_ENABLE

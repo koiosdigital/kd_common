@@ -1,6 +1,6 @@
 #include "crypto.h"
 
-#ifndef KD_COMMON_CRYPTO_DISABLE
+#ifdef CONFIG_KD_COMMON_CRYPTO_ENABLE
 
 #include "crypto_internal.h"
 #include "nvs_handle.h"
@@ -508,4 +508,4 @@ esp_err_t crypto_clear_all_data() {
     return ESP_OK;
 }
 
-#endif // KD_COMMON_CRYPTO_DISABLE
+#endif // CONFIG_KD_COMMON_CRYPTO_ENABLE

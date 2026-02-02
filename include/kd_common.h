@@ -1,10 +1,10 @@
 #pragma once
 
-#ifndef KD_COMMON_CRYPTO_DISABLE
+#ifdef CONFIG_KD_COMMON_CRYPTO_ENABLE
 #include "esp_ds.h"
 #endif
 
-#ifndef KD_COMMON_API_DISABLE
+#ifdef CONFIG_KD_COMMON_API_ENABLE
 #include "esp_http_server.h"
 #endif
 
@@ -28,11 +28,7 @@ extern "C" {
 }
 #endif
 
-#ifndef DEVICE_NAME_PREFIX
-#define DEVICE_NAME_PREFIX "KD"
-#endif
-
-#ifndef KD_COMMON_CRYPTO_DISABLE
+#ifdef CONFIG_KD_COMMON_CRYPTO_ENABLE
 typedef struct esp_ds_data_ctx {
     esp_ds_data_t* esp_ds_data;
     uint8_t efuse_key_id;
@@ -48,16 +44,17 @@ typedef enum CryptoState_t {
 } CryptoState_t;
 #endif
 
-typedef enum ProvisioningPOPTokenFormat_t {
-    NONE = 0,
-    ALPHA_8 = 1,
-    NUMERIC_6 = 2,
-} ProvisioningPOPTokenFormat_t;
+typedef enum ProvisioningSRPPasswordFormat_t {
+    STATIC = 0,
+    NUMERIC_6 = 1,
+    NUMERIC_6_REDUCED = 2,
+    NUMERIC_4 = 3
+} ProvisioningSRPPasswordFormat_t;
 
 void kd_common_init();
 void kd_common_reverse_bytes(uint8_t* data, size_t len);
 
-#ifndef KD_COMMON_CRYPTO_DISABLE
+#ifdef CONFIG_KD_COMMON_CRYPTO_ENABLE
 esp_ds_data_ctx_t* kd_common_crypto_get_ctx();
 esp_err_t kd_common_get_device_cert(char* buffer, size_t* len);
 esp_err_t kd_common_set_device_cert(const char* cert, size_t len);
@@ -73,22 +70,21 @@ esp_err_t kd_common_crypto_test_ds_signing();  // Debug: test DS peripheral sign
 char* kd_common_get_device_name();
 
 // Provisioning functions
-char* kd_common_provisioning_get_pop_token();
-char* kd_common_get_provisioning_qr_payload();
-void kd_common_set_provisioning_pop_token_format(ProvisioningPOPTokenFormat_t format);
+char* kd_common_provisioning_get_srp_password();
+void kd_common_set_provisioning_srp_password_format(ProvisioningSRPPasswordFormat_t format);
 void kd_common_start_provisioning();  // Start BLE provisioning manually (e.g., button hold)
 
 char* kd_common_run_command(char* input, int* return_code);
 
-#ifndef KD_COMMON_CONSOLE_DISABLE
+#ifdef CONFIG_KD_COMMON_CONSOLE_ENABLE
 // Console command registration for external components
 typedef int (*kd_console_cmd_func_t)(int argc, char** argv);
 
 esp_err_t kd_console_register_cmd(const char* command, const char* help,
-                                   kd_console_cmd_func_t func);
+    kd_console_cmd_func_t func);
 
 esp_err_t kd_console_register_cmd_with_args(const char* command, const char* help,
-                                             kd_console_cmd_func_t func, void* argtable);
+    kd_console_cmd_func_t func, void* argtable);
 
 // Formatted output (respects capture mode for kd_common_run_command)
 int console_out(const char* format, ...) __attribute__((format(printf, 1, 2)));
@@ -136,6 +132,6 @@ int kd_common_get_timezone_count();
 void kd_common_set_device_info(const char* model, const char* type);
 
 // API functions
-#ifndef KD_COMMON_API_DISABLE
+#ifdef CONFIG_KD_COMMON_API_ENABLE
 httpd_handle_t kd_common_api_get_httpd_handle();
 #endif

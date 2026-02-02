@@ -1,0 +1,4 @@
+dependencies:
+  espressif/network_provisioning:
+    version: "^1.2.2"
+  espressif/cjson: "^1.7.19"

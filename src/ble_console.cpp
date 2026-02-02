@@ -1,6 +1,6 @@
 #include "ble_console.h"
 
-#ifndef KD_COMMON_CONSOLE_DISABLE
+#ifdef CONFIG_KD_COMMON_CONSOLE_ENABLE
 
 #include <string.h>
 #include <stdlib.h>
@@ -12,7 +12,7 @@
 #include "kd/v1/common.pb-c.h"
 
 #include "kd_common.h"
-#ifndef KD_COMMON_CRYPTO_DISABLE
+#ifdef CONFIG_KD_COMMON_CRYPTO_ENABLE
 #include "crypto.h"
 #endif
 #include "ble_console_protocol.h"
@@ -20,7 +20,7 @@
 static const char* TAG = "ble_console";
 
 
-#ifndef KD_COMMON_CRYPTO_DISABLE
+#ifdef CONFIG_KD_COMMON_CRYPTO_ENABLE
 static uint8_t crypto_retry_count = 0;
 static constexpr uint8_t CRYPTO_MAX_RETRIES = 3;
 #endif
@@ -91,7 +91,7 @@ static void handle_request(const Kd__V1__ConsoleMessage* req) {
     ESP_LOGI(TAG, "handle request: payload_case=%d", req->payload_case);
 
     switch (req->payload_case) {
-#ifndef KD_COMMON_CRYPTO_DISABLE
+#ifdef CONFIG_KD_COMMON_CRYPTO_ENABLE
     case KD__V1__CONSOLE_MESSAGE__PAYLOAD_GET_CSR_REQUEST: {
         Kd__V1__CommandResult result = KD__V1__COMMAND_RESULT__INIT;
         result.success = false;
@@ -341,7 +341,7 @@ static void handle_request(const Kd__V1__ConsoleMessage* req) {
         prepare_response(&resp);
         break;
     }
-#endif // KD_COMMON_CRYPTO_DISABLE
+#endif // CONFIG_KD_COMMON_CRYPTO_ENABLE
 
     default:
         make_error_response("unsupported request");
@@ -444,4 +444,4 @@ esp_err_t ble_console_endpoint(uint32_t session_id, const uint8_t* inbuf, ssize_
     return ESP_OK;
 }
 
-#endif // KD_COMMON_CONSOLE_DISABLE
+#endif // CONFIG_KD_COMMON_CONSOLE_ENABLE
