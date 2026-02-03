@@ -310,6 +310,9 @@ cleanup:
 // Main: ensure_key_exists - orchestrates all
 // ============================================
 esp_err_t ensure_key_exists(void) {
+    g_keygen_mutex = xSemaphoreCreateBinary();
+    xSemaphoreGive(g_keygen_mutex);
+
     esp_efuse_block_t ds_key_block = crypto_get_ds_key_block_internal();
     bool has_fuses = esp_efuse_get_key_purpose(ds_key_block) ==
         ESP_EFUSE_KEY_PURPOSE_HMAC_DOWN_DIGITAL_SIGNATURE;
@@ -318,9 +321,6 @@ esp_err_t ensure_key_exists(void) {
         ESP_LOGI(TAG, "skipping keygen, key already burnt to block: %d", (ds_key_block - 4));
         return kd_common_crypto_test_ds_signing();
     }
-
-    g_keygen_mutex = xSemaphoreCreateBinary();
-    xSemaphoreGive(g_keygen_mutex);
 
     crypto_setup_params_t task_params = {
         .ds_key_block = ds_key_block,
