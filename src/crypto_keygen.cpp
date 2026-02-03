@@ -1,3 +1,5 @@
+#define MBEDTLS_DECLARE_PRIVATE_IDENTIFIERS
+
 #include "crypto.h"
 
 #ifdef CONFIG_KD_COMMON_CRYPTO_ENABLE
@@ -14,8 +16,9 @@
 #include <esp_ds.h>
 
 #include "psa/crypto.h"
-#include "mbedtls/bignum.h"
 #include "mbedtls/x509_csr.h"
+#include "mbedtls/asn1.h"
+#include "mbedtls/bignum.h"
 
 #include <cstring>
 #include <memory>
@@ -26,105 +29,146 @@ static const char* TAG = "kd_crypto_keygen";
 
 using namespace crypto;
 
-//pvParameter is ptr to psa_key_id_t
-void keygen_task(void* pvParameter) {
-    psa_key_id_t* key_id = static_cast<psa_key_id_t*>(pvParameter);
-    xSemaphoreTake(keygen_mutex, portMAX_DELAY);
+struct crypto_setup_params_t {
+    esp_efuse_block_t ds_key_block;
+    esp_err_t result;
+};
 
-    ESP_LOGD(TAG, "generating key");
+static int parse_pkcs1_rsa_key(const uint8_t* der, size_t der_len,
+    mbedtls_mpi* N, mbedtls_mpi* D)
+{
+    unsigned char* p = const_cast<unsigned char*>(der);
+    const unsigned char* end = der + der_len;
+    size_t len;
+    int ret;
 
-    esp_task_wdt_config_t twdt_config = {
-        .timeout_ms = 1000 * 60,  // 1 minute
-        .idle_core_mask = static_cast<uint32_t>((1 << portNUM_PROCESSORS) - 1),
-        .trigger_panic = true,
-    };
-    esp_task_wdt_reconfigure(&twdt_config);
+    ret = mbedtls_asn1_get_tag(&p, end, &len,
+        MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_SEQUENCE);
+    if (ret != 0) return ret;
 
-    psa_key_attributes_t attributes = PSA_KEY_ATTRIBUTES_INIT;
-    psa_set_key_usage_flags(&attributes,
-        PSA_KEY_USAGE_SIGN_HASH | PSA_KEY_USAGE_VERIFY_HASH |
-        PSA_KEY_USAGE_EXPORT);
-    psa_set_key_algorithm(&attributes, PSA_ALG_RSA_PKCS1V15_SIGN(PSA_ALG_SHA_256));
-    psa_set_key_type(&attributes, PSA_KEY_TYPE_RSA_KEY_PAIR);
-    psa_set_key_bits(&attributes, 3072);
+    int version;
+    ret = mbedtls_asn1_get_int(&p, end, &version);
+    if (ret != 0) return ret;
 
-    psa_status_t status = psa_generate_key(&attributes, key_id);
-    if (status != PSA_SUCCESS) {
-        ESP_LOGE(TAG, "Failed to generate key: %d", status);
-    };
+    ret = mbedtls_asn1_get_mpi(&p, end, N);  // modulus
+    if (ret != 0) return ret;
 
-    ESP_LOGI(TAG, "key generated");
+    mbedtls_mpi e;
+    mbedtls_mpi_init(&e);
+    ret = mbedtls_asn1_get_mpi(&p, end, &e);  // publicExponent (skip)
+    mbedtls_mpi_free(&e);
+    if (ret != 0) return ret;
 
-    twdt_config.timeout_ms = 5000;
-    esp_task_wdt_reconfigure(&twdt_config);
-    xSemaphoreGive(keygen_mutex);
-
-    vTaskDelete(nullptr);
+    ret = mbedtls_asn1_get_mpi(&p, end, D);  // privateExponent
+    return ret;
 }
 
-/*
-void calculate_rinv_mprime(mbedtls_mpi* N, mbedtls_mpi* rinv, uint32_t* mprime) {
-    mbedtls_mpi rr, ls32, a;
-    mbedtls_mpi_init(&rr);
-    mbedtls_mpi_init(&ls32);
-    mbedtls_mpi_init(&a);
+static void calculate_ds_params(mbedtls_mpi* N, mbedtls_mpi* Rb, uint32_t* mprime) {
+    mbedtls_mpi tmp, mod32;
+    mbedtls_mpi_init(&tmp);
+    mbedtls_mpi_init(&mod32);
 
-    mbedtls_mpi_lset(&rr, 1);
-    mbedtls_mpi_shift_l(&rr, KEY_SIZE * 2);
+    // Rb = (2^key_bits)^2 mod N
+    mbedtls_mpi_lset(&tmp, 1);
+    mbedtls_mpi_shift_l(&tmp, KEY_SIZE * 2);
+    mbedtls_mpi_mod_mpi(Rb, &tmp, N);
 
-    mbedtls_mpi_mod_mpi(rinv, &rr, N);
+    // M' = -N^(-1) mod 2^32
+    mbedtls_mpi_lset(&mod32, 1);
+    mbedtls_mpi_shift_l(&mod32, 32);
+    mbedtls_mpi_inv_mod(&tmp, N, &mod32);
 
-    mbedtls_mpi_lset(&ls32, 1);
-    mbedtls_mpi_shift_l(&ls32, 32);
+    uint32_t inv32;
+    mbedtls_mpi_write_binary_le(&tmp, reinterpret_cast<uint8_t*>(&inv32), 4);
+    *mprime = ~inv32 + 1;
 
-    mbedtls_mpi_inv_mod(&a, N, &ls32);
-
-    uint32_t a32 = 0;
-    mbedtls_mpi_write_binary_le(&a, reinterpret_cast<uint8_t*>(&a32), sizeof(uint32_t));
-    *mprime = (static_cast<int32_t>(a32) * -1) & 0xFFFFFFFF;
-
-    mbedtls_mpi_free(&rr);
-    mbedtls_mpi_free(&ls32);
-    mbedtls_mpi_free(&a);
+    mbedtls_mpi_free(&tmp);
+    mbedtls_mpi_free(&mod32);
 }
 
-void rinv_mprime_to_ds_params(mbedtls_mpi* D, mbedtls_mpi* N, mbedtls_mpi* rinv,
-    uint32_t mprime, esp_ds_p_data_t* params) {
-    mbedtls_mpi_write_binary(D, reinterpret_cast<uint8_t*>(params->Y), sizeof(params->Y));
-    mbedtls_mpi_write_binary(N, reinterpret_cast<uint8_t*>(params->M), sizeof(params->M));
-    mbedtls_mpi_write_binary(rinv, reinterpret_cast<uint8_t*>(params->Rb), sizeof(params->Rb));
+static void mpi_to_ds_params(mbedtls_mpi* D, mbedtls_mpi* N, mbedtls_mpi* Rb,
+    uint32_t mprime, esp_ds_p_data_t* params)
+{
+    size_t bl = KEY_SIZE / 8;
+    memset(params, 0, sizeof(*params));
 
-    kd_common_reverse_bytes(reinterpret_cast<uint8_t*>(params->Y), KEY_SIZE / 8);
-    kd_common_reverse_bytes(reinterpret_cast<uint8_t*>(params->M), KEY_SIZE / 8);
-    kd_common_reverse_bytes(reinterpret_cast<uint8_t*>(params->Rb), KEY_SIZE / 8);
+    mbedtls_mpi_write_binary_le(D, reinterpret_cast<uint8_t*>(params->Y), bl);
+    mbedtls_mpi_write_binary_le(N, reinterpret_cast<uint8_t*>(params->M), bl);
+    mbedtls_mpi_write_binary_le(Rb, reinterpret_cast<uint8_t*>(params->Rb), bl);
 
     params->M_prime = mprime;
     params->length = (KEY_SIZE / 32) - 1;
 }
 
-esp_err_t store_csr(mbedtls_rsa_context* rsa) {
+static esp_err_t psa_key_to_ds_params(psa_key_id_t key_id, esp_ds_p_data_t* params) {
+    size_t der_size = PSA_EXPORT_KEY_OUTPUT_SIZE(PSA_KEY_TYPE_RSA_KEY_PAIR, KEY_SIZE);
+    auto der = std::make_unique<uint8_t[]>(der_size);
+    size_t der_len;
+
+    psa_status_t status = psa_export_key(key_id, der.get(), der_size, &der_len);
+    if (status != PSA_SUCCESS) {
+        ESP_LOGE(TAG, "psa_export_key failed: %d", status);
+        return ESP_FAIL;
+    }
+
+    mbedtls_mpi N, D, Rb;
+    mbedtls_mpi_init(&N);
+    mbedtls_mpi_init(&D);
+    mbedtls_mpi_init(&Rb);
+
+    int ret = parse_pkcs1_rsa_key(der.get(), der_len, &N, &D);
+    if (ret != 0) {
+        ESP_LOGE(TAG, "PKCS#1 parse failed: -0x%04X", -ret);
+        mbedtls_mpi_free(&N);
+        mbedtls_mpi_free(&D);
+        return ESP_FAIL;
+    }
+
+    uint32_t mprime = 0;
+    calculate_ds_params(&N, &Rb, &mprime);
+    mpi_to_ds_params(&D, &N, &Rb, mprime, params);
+
+    mbedtls_mpi_free(&N);
+    mbedtls_mpi_free(&D);
+    mbedtls_mpi_free(&Rb);
+
+    return ESP_OK;
+}
+
+static psa_key_id_t generate_rsa_key() {
+    psa_key_id_t key_id = 0;
+
+    psa_key_attributes_t attributes = PSA_KEY_ATTRIBUTES_INIT;
+    psa_set_key_usage_flags(&attributes,
+        PSA_KEY_USAGE_SIGN_HASH | PSA_KEY_USAGE_VERIFY_HASH | PSA_KEY_USAGE_EXPORT);
+    psa_set_key_algorithm(&attributes, PSA_ALG_RSA_PKCS1V15_SIGN(PSA_ALG_SHA_256));
+    psa_set_key_type(&attributes, PSA_KEY_TYPE_RSA_KEY_PAIR);
+    psa_set_key_bits(&attributes, KEY_SIZE);
+
+    psa_status_t status = psa_generate_key(&attributes, &key_id);
+    if (status != PSA_SUCCESS) {
+        ESP_LOGE(TAG, "Failed to generate key: %d", status);
+        return 0;
+    }
+
+    ESP_LOGI(TAG, "key generated");
+    return key_id;
+}
+
+static esp_err_t store_csr(psa_key_id_t key_id) {
     mbedtls_x509write_csr req;
-    mbedtls_entropy_context entropy;
-    mbedtls_ctr_drbg_context ctr_drbg;
-    mbedtls_pk_context pk = {};
+    mbedtls_pk_context pk;
+    uint8_t* csr_buffer = NULL;
+    esp_err_t err = ESP_FAIL;
 
-    mbedtls_entropy_init(&entropy);
-    mbedtls_ctr_drbg_init(&ctr_drbg);
     mbedtls_x509write_csr_init(&req);
+    mbedtls_pk_init(&pk);
 
-    // RAII cleanup
-    struct Cleanup {
-        mbedtls_x509write_csr* req;
-        mbedtls_ctr_drbg_context* ctr_drbg;
-        mbedtls_entropy_context* entropy;
-        ~Cleanup() {
-            mbedtls_x509write_csr_free(req);
-            mbedtls_ctr_drbg_free(ctr_drbg);
-            mbedtls_entropy_free(entropy);
-        }
-    } cleanup{ &req, &ctr_drbg, &entropy };
-
-    mbedtls_ctr_drbg_seed(&ctr_drbg, mbedtls_entropy_func, &entropy, nullptr, 0);
+    int ret = mbedtls_pk_copy_from_psa(key_id, &pk);
+    if (ret != 0) {
+        ESP_LOGE(TAG, "pk_copy_from_psa failed: %d", ret);
+        goto cleanup;
+    }
 
     mbedtls_x509write_csr_set_md_alg(&req, MBEDTLS_MD_SHA256);
     mbedtls_x509write_csr_set_key_usage(&req, MBEDTLS_X509_KU_DIGITAL_SIGNATURE);
@@ -132,31 +176,150 @@ esp_err_t store_csr(mbedtls_rsa_context* rsa) {
 
     char cn[128];
     snprintf(cn, sizeof(cn), "CN=%s.iotdevices.koiosdigital.net", kd_common_get_device_name());
-    mbedtls_x509write_csr_set_subject_name(&req, cn);
-
-    mbedtls_pk_setup(&pk, mbedtls_pk_info_from_type(MBEDTLS_PK_RSA));
-
-    int ret = mbedtls_rsa_copy(mbedtls_pk_rsa(pk), rsa);
+    ret = mbedtls_x509write_csr_set_subject_name(&req, cn);
     if (ret != 0) {
-        ESP_LOGE(TAG, "rsa_copy failed: %d", ret);
-        return ESP_FAIL;
+        ESP_LOGE(TAG, "set_subject_name failed: %d", ret);
+        goto cleanup;
     }
 
     mbedtls_x509write_csr_set_key(&req, &pk);
 
-    auto csr_buffer = std::make_unique<unsigned char[]>(PEM_BUFFER_SIZE);
-
-    ret = mbedtls_x509write_csr_pem(&req, csr_buffer.get(), PEM_BUFFER_SIZE,
-        mbedtls_ctr_drbg_random, &ctr_drbg);
-    if (ret != 0) {
-        ESP_LOGE(TAG, "csr_pem failed: %d", ret);
-        return ESP_FAIL;
+    csr_buffer = (uint8_t*)malloc(PEM_BUFFER_SIZE);
+    if (csr_buffer == NULL) {
+        ESP_LOGE(TAG, "malloc failed");
+        goto cleanup;
     }
 
-    return crypto_storage_store_csr(csr_buffer.get(), std::strlen(reinterpret_cast<char*>(csr_buffer.get())));
-}
-*/
+    ret = mbedtls_x509write_csr_pem(&req, csr_buffer, PEM_BUFFER_SIZE);
+    if (ret != 0) {
+        ESP_LOGE(TAG, "csr_pem failed: %d", ret);
+        goto cleanup;
+    }
 
+    err = crypto_storage_store_csr(csr_buffer, strlen((const char*)csr_buffer));
+
+cleanup:
+    mbedtls_x509write_csr_free(&req);
+    mbedtls_pk_free(&pk);
+    free(csr_buffer);
+
+    return err;
+}
+
+static void crypto_setup_task(void* pvParameter) {
+    auto* params = static_cast<crypto_setup_params_t*>(pvParameter);
+    params->result = ESP_FAIL;
+
+    uint8_t iv[16] = { 0 };
+    uint8_t hmac[32] = { 0 };
+
+    heap_caps_check_integrity_all(true);
+    ESP_LOGW(TAG, "heap check before all");
+    ESP_LOGI(TAG, "free: %d, int: %d", esp_get_free_heap_size(), esp_get_free_internal_heap_size());
+
+    esp_ds_data_t* encrypted = nullptr;
+    esp_ds_p_data_t* ds_params = nullptr;
+
+    xSemaphoreTake(keygen_mutex, portMAX_DELAY);
+
+    // Extend watchdog timeout for key generation
+    esp_task_wdt_config_t twdt_config = {
+        .timeout_ms = 1000 * 60 * 2,  // 2 minutes
+        .idle_core_mask = static_cast<uint32_t>((1 << portNUM_PROCESSORS) - 1),
+        .trigger_panic = true,
+    };
+    esp_task_wdt_reconfigure(&twdt_config);
+
+    // Generate RSA key
+    psa_key_id_t key_id = generate_rsa_key();
+    if (key_id == 0) {
+        ESP_LOGE(TAG, "key generation failed");
+        goto cleanup;
+    }
+
+    heap_caps_check_integrity_all(true);
+    ESP_LOGW(TAG, "heap check after rsa gen");
+    ESP_LOGI(TAG, "free: %d, int: %d", esp_get_free_heap_size(), esp_get_free_internal_heap_size());
+
+    // Store CSR
+    if (store_csr(key_id) != ESP_OK) {
+        ESP_LOGE(TAG, "store csr failed");
+        psa_destroy_key(key_id);
+        goto cleanup;
+    }
+    else {
+        ESP_LOGI(TAG, "store csr OK!");
+    }
+
+    heap_caps_check_integrity_all(true);
+    ESP_LOGW(TAG, "heap check after csr gen");
+    ESP_LOGI(TAG, "free: %d, int: %d", esp_get_free_heap_size(), esp_get_free_internal_heap_size());
+
+    // Compute DS params
+    ds_params = (esp_ds_p_data_t*)calloc(1, sizeof(esp_ds_p_data_t));
+    if (!ds_params) {
+        ESP_LOGE(TAG, "no mem for ds params");
+        psa_destroy_key(key_id);
+        goto cleanup;
+    }
+    else {
+        ESP_LOGI(TAG, "ds alloc ok!");
+    }
+
+    if (psa_key_to_ds_params(key_id, ds_params) != ESP_OK) {
+        ESP_LOGE(TAG, "PSA to DS failed");
+        free(ds_params);
+        psa_destroy_key(key_id);
+        goto cleanup;
+    }
+    else {
+        ESP_LOGI(TAG, "ds convert ok!");
+    }
+
+    heap_caps_check_integrity_all(true);
+    ESP_LOGW(TAG, "heap check after ds conversion");
+    ESP_LOGI(TAG, "free: %d, int: %d", esp_get_free_heap_size(), esp_get_free_internal_heap_size());
+
+
+    // Generate IV and HMAC key
+    esp_fill_random(iv, sizeof(iv));
+    esp_fill_random(hmac, sizeof(hmac));
+
+    encrypted = (esp_ds_data_t*)heap_caps_calloc(1, sizeof(esp_ds_data_t), MALLOC_CAP_DMA);
+    if (!encrypted) {
+        ESP_LOGE(TAG, "no mem for encrypted ds data");
+        free(ds_params);
+        psa_destroy_key(key_id);
+        goto cleanup;
+    }
+
+    esp_ds_encrypt_params(encrypted, iv, ds_params, hmac);
+    crypto_storage_store_ds_params(encrypted->c, iv, params->ds_key_block, (KEY_SIZE / 32) - 1);
+
+    heap_caps_free(encrypted);
+    free(ds_params);
+
+    // Burn to eFuse (commented out for testing)
+    esp_efuse_write_key(params->ds_key_block, ESP_EFUSE_KEY_PURPOSE_HMAC_DOWN_DIGITAL_SIGNATURE, hmac, 32);
+    esp_efuse_set_read_protect(params->ds_key_block);
+
+    psa_destroy_key(key_id);
+
+    heap_caps_check_integrity_all(true);
+    ESP_LOGW(TAG, "heap check after all");
+    ESP_LOGI(TAG, "free: %d, int: %d", esp_get_free_heap_size(), esp_get_free_internal_heap_size());
+    params->result = ESP_OK;
+
+cleanup:
+    twdt_config.timeout_ms = 5000;
+    esp_task_wdt_reconfigure(&twdt_config);
+    xSemaphoreGive(keygen_mutex);
+    vTaskDelete(nullptr);
+}
+
+// ============================================
+// Main: ensure_key_exists - orchestrates all
+// ============================================
 esp_err_t ensure_key_exists() {
     keygen_mutex = xSemaphoreCreateBinary();
     xSemaphoreGive(keygen_mutex);
@@ -167,73 +330,29 @@ esp_err_t ensure_key_exists() {
 
     if (has_fuses) {
         ESP_LOGI(TAG, "skipping keygen, key already burnt to block: %d", (ds_key_block - 4));
-        //return ESP_OK;
+        return ESP_OK;
     }
 
-    psa_key_id_t key_id = 0;
+    crypto_setup_params_t task_params = {
+        .ds_key_block = ds_key_block,
+        .result = ESP_FAIL,
+    };
 
-    // Generate RSA keypair on APP_CPU
-    xTaskCreatePinnedToCore(keygen_task, "keygen_task", 8192, &key_id, 5, nullptr, 1);
+    // Run all crypto operations on separate task with 16KB stack
+    xTaskCreate(crypto_setup_task, "crypto_setup", 16384, &task_params, 5, nullptr);
 
     vTaskDelay(pdMS_TO_TICKS(1000));
-
     while (xSemaphoreTake(keygen_mutex, pdMS_TO_TICKS(5000)) != pdTRUE) {
-        ESP_LOGI(TAG, "keygen_task still running");
+        ESP_LOGI(TAG, "crypto_setup_task still running");
     }
 
-    /* 5. (Optional) Export the full keypair (if PSA_KEY_USAGE_EXPORT was set) */
-    uint8_t key_buf[PSA_EXPORT_KEY_OUTPUT_SIZE(PSA_KEY_TYPE_RSA_KEY_PAIR, 3072)];
-    size_t key_len;
-    psa_status_t status = psa_export_key(key_id, key_buf, sizeof(key_buf), &key_len);
-
-    ESP_LOG_BUFFER_HEXDUMP(TAG, key_buf, key_len, ESP_LOG_INFO);
-
-    return ESP_OK;
-
-    /*
-    uint32_t mprime = 0;
-    calculate_rinv_mprime(&rsa.private_N, &rinv, &mprime);
-
-    auto params = std::unique_ptr<esp_ds_p_data_t, decltype(&free)>(
-        static_cast<esp_ds_p_data_t*>(calloc(1, sizeof(esp_ds_p_data_t))),
-        free);
-    if (!params) {
-        ESP_LOGE(TAG, "no mem for ds params");
-        return ESP_ERR_NO_MEM;
-    }
-
-    rinv_mprime_to_ds_params(&rsa.private_D, &rsa.private_N, &rinv, mprime, params.get());
-
-    esp_err_t error = store_csr(&rsa);
-    if (error != ESP_OK) {
-        ESP_LOGE(TAG, "store csr failed");
+    if (task_params.result != ESP_OK) {
         esp_restart();
-        return error;
     }
 
-    // Generate IV and HMAC key
-    uint8_t iv[16];
-    uint8_t hmac[32];
-    esp_fill_random(iv, sizeof(iv));
-    esp_fill_random(hmac, sizeof(hmac));
+    kd_common_crypto_test_ds_signing();
 
-    auto encrypted = std::unique_ptr<esp_ds_data_t, decltype(&free)>(
-        static_cast<esp_ds_data_t*>(heap_caps_calloc(1, sizeof(esp_ds_data_t), MALLOC_CAP_DMA)),
-        free);
-    if (!encrypted) {
-        ESP_LOGE(TAG, "no mem for encrypted ds data");
-        return ESP_ERR_NO_MEM;
-    }
-
-    esp_ds_encrypt_params(encrypted.get(), iv, params.get(), hmac);
-
-    crypto_storage_store_ds_params(encrypted->c, iv, ds_key_block, (KEY_SIZE / 32) - 1);
-
-    esp_efuse_write_key(ds_key_block, ESP_EFUSE_KEY_PURPOSE_HMAC_DOWN_DIGITAL_SIGNATURE, hmac, 32);
-    esp_efuse_set_read_protect(ds_key_block);
-
-    return ESP_OK;
-    */
+    return task_params.result;
 }
 
 #endif // CONFIG_KD_COMMON_CRYPTO_ENABLE

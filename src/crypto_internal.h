@@ -22,7 +22,7 @@ namespace crypto {
     constexpr const char* NVS_KEY_CLAIM_TOKEN = "claim_token";
     constexpr const char* NVS_KEY_DS_KEY_BLOCK = "ds_key_blk";
 
-    constexpr size_t KEY_SIZE = 4096;
+    constexpr size_t KEY_SIZE = 2048;
     constexpr size_t PEM_BUFFER_SIZE = 12288;  // 12KB for fullchain (leaf + intermediates)
 
     // Get current DS key block (reads from NVS, defaults to EFUSE_BLK_KEY3)
@@ -47,8 +47,4 @@ esp_err_t crypto_storage_store_ds_params(const uint8_t* c, const uint8_t* iv, ui
 esp_ds_data_ctx_t* crypto_storage_get_ds_ctx();
 
 // Internal functions - crypto_keygen.cpp
-void keygen_task(void* pvParameter);
-//void calculate_rinv_mprime(mbedtls_mpi* N, mbedtls_mpi* rinv, uint32_t* mprime);
-//void rinv_mprime_to_ds_params(mbedtls_mpi* D, mbedtls_mpi* N, mbedtls_mpi* rinv, uint32_t mprime, esp_ds_p_data_t* params);
-//esp_err_t store_csr(mbedtls_rsa_context* rsa);
 esp_err_t ensure_key_exists();

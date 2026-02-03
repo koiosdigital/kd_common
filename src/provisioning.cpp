@@ -105,7 +105,7 @@ namespace {
 #endif
 
         state.provisioning_started = true;
-        ESP_LOGI(TAG, "BLE provisioning started, S2 (%s / %s)", "koiosdigital", "psk");
+        ESP_LOGI(TAG, "BLE provisioning started, S2 (%s / %s)", "koiosdigital", state.srp_password);
     }
 
     void provisioning_event_handler(void* arg, esp_event_base_t event_base,
@@ -140,10 +140,12 @@ namespace {
             case NETWORK_PROV_END:
                 ESP_LOGI(TAG, "Provisioning ended");
                 network_prov_mgr_deinit();  // This frees BT memory via scheme handler
+                state.provisioning_started = false;
+                break;
+            case NETWORK_PROV_DEINIT:
                 free(const_cast<char*>(state.srp_params.salt));
                 free(const_cast<char*>(state.srp_params.verifier));
                 state.srp_params = { 0 };
-                state.provisioning_started = false;
                 break;
             }
         }

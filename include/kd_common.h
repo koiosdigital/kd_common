@@ -95,6 +95,7 @@ int console_out(const char* format, ...) __attribute__((format(printf, 1, 2)));
 void kd_common_wifi_disconnect();
 void kd_common_clear_wifi_credentials();
 bool kd_common_is_wifi_connected();
+esp_err_t kd_common_wifi_connect(const char* ssid, const char* password);
 
 // WiFi hostname functions (separate from device name)
 void kd_common_set_wifi_hostname(const char* hostname);
@@ -134,5 +135,11 @@ void kd_common_set_device_info(const char* model, const char* type);
 
 // API functions
 #ifdef CONFIG_KD_COMMON_API_ENABLE
-httpd_handle_t kd_common_api_get_httpd_handle();
+// Callback type for registering HTTP handlers
+typedef void (*kd_common_api_handler_registrar_fn)(httpd_handle_t server);
+
+// Register a callback to be called with httpd handle when server starts.
+// If server is already running, callback is invoked immediately.
+// Callbacks are stored and re-invoked on WiFi reconnect.
+void kd_common_api_register_handlers(kd_common_api_handler_registrar_fn registrar);
 #endif

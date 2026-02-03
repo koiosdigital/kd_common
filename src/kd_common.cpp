@@ -46,7 +46,7 @@ void kd_common_init() {
     kdmdns_init();
 
 #ifdef CONFIG_KD_COMMON_API_ENABLE
-    api_init();
+    // api_init();
 #endif
 }
 
@@ -130,7 +130,7 @@ void kd_common_set_device_info(const char* model, const char* type) {
 
 // API functions
 #ifdef CONFIG_KD_COMMON_API_ENABLE
-httpd_handle_t kd_common_api_get_httpd_handle() {
-    return api_get_httpd_handle();
+void kd_common_api_register_handlers(kd_common_api_handler_registrar_fn registrar) {
+    api_register_handlers(registrar);
 }
 #endif

@@ -78,7 +78,6 @@ esp_err_t crypto_storage_store_csr(const unsigned char* csr_buffer, size_t len) 
         return err;
     }
 
-    ESP_LOGI(TAG, "CSR stored");
     return ESP_OK;
 }
 
@@ -244,7 +243,6 @@ esp_err_t crypto_storage_store_ds_params(const uint8_t* c, const uint8_t* iv, ui
         return err;
     }
 
-    ESP_LOGI(TAG, "DS params stored");
     return ESP_OK;
 }
 
@@ -504,7 +502,6 @@ esp_err_t crypto_clear_all_data() {
         return err;
     }
 
-    ESP_LOGI(TAG, "All crypto data cleared");
     return ESP_OK;
 }
 

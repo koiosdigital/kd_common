@@ -7,20 +7,72 @@
 #include "esp_http_server.h"
 #include "cJSON.h"
 #include <esp_app_desc.h>
+#include <esp_event.h>
+#include <esp_wifi.h>
+#include <esp_log.h>
 #include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
+static const char* TAG = "kd_api";
+
 namespace {
     httpd_handle_t kd_api_server = NULL;
-}
 
-static void server_init() {
-    httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-    config.max_uri_handlers = 30;
-    config.uri_match_fn = httpd_uri_match_wildcard;
-    config.stack_size = 16 * 1024;  // Needs 12KB for handlers with large buffers + ESP_LOG calls
-    httpd_start(&kd_api_server, &config);
+    // Max number of external handler registrars
+    constexpr size_t MAX_REGISTRARS = 16;
+    api_handler_registrar_fn registrars[MAX_REGISTRARS] = { nullptr };
+    size_t registrar_count = 0;
+
+    void register_internal_handlers();
+
+    void start_server() {
+        if (kd_api_server != NULL) {
+            return;
+        }
+
+        httpd_config_t config = HTTPD_DEFAULT_CONFIG();
+        config.max_uri_handlers = 30;
+        config.uri_match_fn = httpd_uri_match_wildcard;
+        config.stack_size = 16 * 1024;
+
+        esp_err_t ret = httpd_start(&kd_api_server, &config);
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to start httpd: %s", esp_err_to_name(ret));
+            return;
+        }
+
+        ESP_LOGI(TAG, "HTTP server started");
+
+        // Register internal kd_common handlers
+        register_internal_handlers();
+
+        // Call all registered external handler registrars
+        for (size_t i = 0; i < registrar_count; i++) {
+            if (registrars[i] != nullptr) {
+                registrars[i](kd_api_server);
+            }
+        }
+    }
+
+    void stop_server() {
+        if (kd_api_server == NULL) {
+            return;
+        }
+
+        httpd_stop(kd_api_server);
+        kd_api_server = NULL;
+        ESP_LOGI(TAG, "HTTP server stopped");
+    }
+
+    void wifi_event_handler(void*, esp_event_base_t base, int32_t id, void*) {
+        if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
+            start_server();
+        }
+        else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
+            stop_server();
+        }
+    }
 }
 
 static esp_err_t root_handler(httpd_req_t* req) {
@@ -239,60 +291,80 @@ static esp_err_t wildcard_options_handler(httpd_req_t* req) {
     return ESP_OK;
 }
 
-void api_init() {
-    server_init();
+namespace {
+    void register_internal_handlers() {
+        static httpd_uri_t about_uri = {
+            .uri = "/api/about",
+            .method = HTTP_GET,
+            .handler = about_handler,
+            .user_ctx = NULL
+        };
+        httpd_register_uri_handler(kd_api_server, &about_uri);
 
-    httpd_uri_t about_uri = {
-        .uri = "/api/about",
-        .method = HTTP_GET,
-        .handler = about_handler,
-        .user_ctx = NULL
-    };
-    httpd_register_uri_handler(kd_api_server, &about_uri);
+        static httpd_uri_t system_config_get_uri = {
+            .uri = "/api/system/config",
+            .method = HTTP_GET,
+            .handler = system_config_get_handler,
+            .user_ctx = NULL
+        };
+        httpd_register_uri_handler(kd_api_server, &system_config_get_uri);
 
-    httpd_uri_t system_config_get_uri = {
-        .uri = "/api/system/config",
-        .method = HTTP_GET,
-        .handler = system_config_get_handler,
-        .user_ctx = NULL
-    };
-    httpd_register_uri_handler(kd_api_server, &system_config_get_uri);
+        static httpd_uri_t system_config_post_uri = {
+            .uri = "/api/system/config",
+            .method = HTTP_POST,
+            .handler = system_config_post_handler,
+            .user_ctx = NULL
+        };
+        httpd_register_uri_handler(kd_api_server, &system_config_post_uri);
 
-    httpd_uri_t system_config_post_uri = {
-        .uri = "/api/system/config",
-        .method = HTTP_POST,
-        .handler = system_config_post_handler,
-        .user_ctx = NULL
-    };
-    httpd_register_uri_handler(kd_api_server, &system_config_post_uri);
+        static httpd_uri_t time_zones_uri = {
+            .uri = "/api/time/zonedb",
+            .method = HTTP_GET,
+            .handler = time_zones_handler,
+            .user_ctx = NULL
+        };
+        httpd_register_uri_handler(kd_api_server, &time_zones_uri);
 
-    httpd_uri_t time_zones_uri = {
-        .uri = "/api/time/zonedb",
-        .method = HTTP_GET,
-        .handler = time_zones_handler,
-        .user_ctx = NULL
-    };
-    httpd_register_uri_handler(kd_api_server, &time_zones_uri);
+        static httpd_uri_t options_uri = {
+            .uri = "/api/*",
+            .method = HTTP_OPTIONS,
+            .handler = wildcard_options_handler,
+            .user_ctx = NULL
+        };
+        httpd_register_uri_handler(kd_api_server, &options_uri);
 
-    static httpd_uri_t options_uri = {
-        .uri = "/api/*",
-        .method = HTTP_OPTIONS,
-        .handler = wildcard_options_handler,
-        .user_ctx = NULL
-    };
-    httpd_register_uri_handler(kd_api_server, &options_uri);
-
-    httpd_uri_t root_uri = {
-        .uri = "/",
-        .method = HTTP_GET,
-        .handler = root_handler,
-        .user_ctx = NULL
-    };
-    httpd_register_uri_handler(kd_api_server, &root_uri);
+        static httpd_uri_t root_uri = {
+            .uri = "/",
+            .method = HTTP_GET,
+            .handler = root_handler,
+            .user_ctx = NULL
+        };
+        httpd_register_uri_handler(kd_api_server, &root_uri);
+    }
 }
 
-httpd_handle_t api_get_httpd_handle() {
-    return kd_api_server;
+void api_init() {
+    esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, wifi_event_handler, nullptr);
+    esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_STA_DISCONNECTED, wifi_event_handler, nullptr);
+    ESP_LOGI(TAG, "API initialized (waiting for WiFi)");
+}
+
+void api_register_handlers(api_handler_registrar_fn registrar) {
+    if (registrar == nullptr) {
+        return;
+    }
+
+    if (registrar_count >= MAX_REGISTRARS) {
+        ESP_LOGE(TAG, "Max handler registrars reached");
+        return;
+    }
+
+    registrars[registrar_count++] = registrar;
+
+    // If server is already running, call immediately
+    if (kd_api_server != NULL) {
+        registrar(kd_api_server);
+    }
 }
 
 #endif // CONFIG_KD_COMMON_API_ENABLE
