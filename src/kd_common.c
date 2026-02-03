@@ -1,0 +1,139 @@
+#include "kd_common.h"
+#include "kdc_heap_tracing.h"
+
+#include <nvs_flash.h>
+#include <esp_log.h>
+
+#include "crypto.h"
+#include "console.h"
+#include "provisioning.h"
+#include "wifi.h"
+#include "ota.h"
+#include "ntp.h"
+#include "embedded_tz_db.h"
+#include "kdmdns.h"
+#ifdef CONFIG_KD_COMMON_API_ENABLE
+#include "api.h"
+#endif
+
+static const char* TAG = "kd_common";
+
+void kd_common_init(void) {
+    ESP_LOGI(TAG, "initializing");
+
+    // Initialize NVS
+    esp_err_t ret = nvs_flash_init();
+    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        nvs_flash_erase();
+        ret = nvs_flash_init();
+    }
+
+#ifdef CONFIG_KD_COMMON_CONSOLE_ENABLE
+    console_init();
+#endif
+
+#ifdef CONFIG_KD_COMMON_CRYPTO_ENABLE
+    crypto_init();
+#endif
+
+    wifi_init();
+    provisioning_init();
+    ntp_init();
+
+#ifdef ENABLE_OTA
+    ota_init();
+#endif
+
+    kdmdns_init();
+
+#ifdef CONFIG_KD_COMMON_API_ENABLE
+    api_init();
+#endif
+
+    kdc_heap_log_status("post-kd-common-init");
+}
+
+void kd_common_reverse_bytes(uint8_t* data, size_t len) {
+    for (size_t i = 0; i < len / 2; i++) {
+        uint8_t temp = data[i];
+        data[i] = data[len - i - 1];
+        data[len - i - 1] = temp;
+    }
+}
+
+#ifdef ENABLE_OTA
+bool kd_common_ota_has_completed_boot_check(void) {
+    return ota_has_completed_boot_check();
+}
+
+void kd_common_check_ota(void) {
+    ota_check_now();
+}
+#endif
+
+#ifdef CONFIG_KD_COMMON_CRYPTO_ENABLE
+bool kd_common_crypto_will_generate_key(void) {
+    return crypto_will_generate_key();
+}
+#endif
+
+bool kd_common_ntp_is_synced(void) {
+    return ntp_is_synced();
+}
+
+void kd_common_ntp_sync(void) {
+    ntp_sync();
+}
+
+void kd_common_set_auto_timezone(bool enabled) {
+    ntp_set_auto_timezone(enabled);
+}
+
+bool kd_common_get_auto_timezone(void) {
+    return ntp_get_auto_timezone();
+}
+
+void kd_common_set_fetch_tz_on_boot(bool enabled) {
+    ntp_set_fetch_tz_on_boot(enabled);
+}
+
+bool kd_common_get_fetch_tz_on_boot(void) {
+    return ntp_get_fetch_tz_on_boot();
+}
+
+void kd_common_set_timezone(const char* timezone) {
+    ntp_set_timezone(timezone);
+}
+
+const char* kd_common_get_timezone(void) {
+    return ntp_get_timezone();
+}
+
+void kd_common_set_ntp_server(const char* server) {
+    ntp_set_server(server);
+}
+
+const char* kd_common_get_ntp_server(void) {
+    return ntp_get_server();
+}
+
+const kd_common_tz_entry_t* kd_common_get_all_timezones(void) {
+    // The struct layouts are identical (name, rule pointers), safe to cast
+    return (const kd_common_tz_entry_t*)tz_db_get_all_zones();
+}
+
+int kd_common_get_timezone_count(void) {
+    return TZ_DB_NUM_ZONES;
+}
+
+// mDNS functions
+void kd_common_set_device_info(const char* model, const char* type) {
+    kdmdns_set_device_info(model, type);
+}
+
+// API functions
+#ifdef CONFIG_KD_COMMON_API_ENABLE
+void kd_common_api_register_handlers(kd_common_api_handler_registrar_fn registrar) {
+    api_register_handlers(registrar);
+}
+#endif
