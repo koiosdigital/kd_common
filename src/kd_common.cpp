@@ -35,9 +35,9 @@ void kd_common_init() {
     crypto_init();
 #endif
 
-    wifi_init();         // Start WiFi and connect
-    provisioning_init(); // Check provisioned state, start BLE if needed
-    ntp_init();          // Start NTP when WiFi connects
+    wifi_init();
+    provisioning_init();
+    ntp_init();
 
 #ifdef ENABLE_OTA
     ota_init();
@@ -46,7 +46,7 @@ void kd_common_init() {
     kdmdns_init();
 
 #ifdef CONFIG_KD_COMMON_API_ENABLE
-    // api_init();
+    api_init();
 #endif
 }
 
