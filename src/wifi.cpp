@@ -12,7 +12,9 @@
 #include <cstdio>
 
 #include "kd_common.h"
+#include "kdc_heap_tracing.h"
 #include "nvs_handle.h"
+#include "network_provisioning/manager.h"
 
 #ifdef CONFIG_KD_COMMON_CONSOLE_ENABLE
 #include <argtable3/argtable3.h>
@@ -20,7 +22,10 @@
 
 static const char* TAG = "kd_wifi";
 
-namespace {
+void wifi_restart();
+void wifi_start();
+
+namespace kd::wifi {
 
     constexpr const char* NVS_NAMESPACE = "kd_common";
     constexpr const char* HOSTNAME_KEY = "wifi_hostname";
@@ -33,17 +38,35 @@ namespace {
 
     HostnameCache hostname_cache;
 
-}  // namespace
+    // Global netif pointer for reuse across restarts
+    esp_netif_t* g_sta_netif = nullptr;
+
+    // Flag to track when we're clearing credentials and expect a restart
+    bool g_pending_restart = false;
+    bool g_event_handler_registered = false;
+
+    void event_handler(void*, esp_event_base_t event_base, int32_t event_id, void*) {
+        if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_STOP) {
+            if (g_pending_restart) {
+                g_pending_restart = false;
+                ESP_LOGI(TAG, "WiFi stopped after credential clear, restarting...");
+                wifi_restart();
+            }
+        }
+    }
+
+}  // namespace kd::wifi
 
 void kd_common_wifi_disconnect() {
     esp_wifi_disconnect();
 }
 
 void kd_common_clear_wifi_credentials() {
-    kd_common_wifi_disconnect();
+    kdc_heap_check_integrity("wifi-clear-start");
 
-    wifi_config_t wifi_cfg = {};
-    esp_wifi_set_config(WIFI_IF_STA, &wifi_cfg);
+    kd::wifi::g_pending_restart = true;
+    network_prov_mgr_reset_wifi_provisioning();
+    kdc_heap_check_integrity("wifi-clear-post-reset");
 }
 
 void wifi_init() {
@@ -51,25 +74,45 @@ void wifi_init() {
     wifi_console_init();
 #endif
 
-    esp_netif_init();
-    esp_netif_t* netif = esp_netif_create_default_wifi_sta();
+    // Register for WiFi stop event (for credential clear restart) - only once
+    if (!kd::wifi::g_event_handler_registered) {
+        esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_STA_STOP, kd::wifi::event_handler, nullptr);
+        kd::wifi::g_event_handler_registered = true;
+    }
 
+    // One-time network interface initialization
+    esp_netif_init();
+    kd::wifi::g_sta_netif = esp_netif_create_default_wifi_sta();
+
+    // Start WiFi driver
+    wifi_start();
+}
+
+void wifi_start() {
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     esp_wifi_init(&cfg);
     esp_wifi_set_mode(WIFI_MODE_STA);
     esp_wifi_set_ps(WIFI_PS_NONE);
-    esp_netif_set_hostname(netif, kd_common_get_wifi_hostname());
+
+    if (kd::wifi::g_sta_netif) {
+        esp_netif_set_hostname(kd::wifi::g_sta_netif, kd_common_get_wifi_hostname());
+    }
+
     esp_wifi_start();
     esp_wifi_connect();  // Connect directly (reconnects handled by event handler)
+
+    kdc_heap_log_status("post-wifi-start");
 }
 
 void wifi_restart() {
     esp_wifi_stop();
     esp_wifi_deinit();
-    wifi_init();
+    wifi_start();  // NOT wifi_init() - netif already initialized
 }
 
 void kd_common_set_wifi_hostname(const char* hostname) {
+    using namespace kd::wifi;
+
     if (!hostname || std::strlen(hostname) == 0 || std::strlen(hostname) > MAX_HOSTNAME_LEN) {
         return;
     }
@@ -92,11 +135,13 @@ void kd_common_set_wifi_hostname(const char* hostname) {
         return;
     }
 
-    hostname_cache.loaded = false;
+    kd::wifi::hostname_cache.loaded = false;
     wifi_restart();
 }
 
 char* kd_common_get_wifi_hostname() {
+    using namespace kd::wifi;
+
     // Return cached hostname if available
     if (hostname_cache.loaded && hostname_cache.buffer[0] != '\0') {
         return hostname_cache.buffer;
@@ -165,60 +210,71 @@ esp_err_t kd_common_wifi_connect(const char* ssid, const char* password) {
 
 namespace {
 
-static struct {
-    struct arg_lit* confirm;
-    struct arg_end* end;
-} wifi_clear_args;
+    static struct {
+        struct arg_lit* confirm;
+        struct arg_end* end;
+    } wifi_clear_args;
 
-static int cmd_wifi_clear(int argc, char** argv) {
-    int nerrors = arg_parse(argc, argv, (void**)&wifi_clear_args);
-    if (nerrors != 0) {
-        arg_print_errors(stderr, wifi_clear_args.end, argv[0]);
-        return 1;
+    static int cmd_wifi_clear(int argc, char** argv) {
+        kdc_heap_check_integrity("cmd-wifi-clear-entry");
+
+        int nerrors = arg_parse(argc, argv, (void**)&wifi_clear_args);
+        kdc_heap_check_integrity("cmd-wifi-clear-post-argparse");
+
+        if (nerrors != 0) {
+            arg_print_errors(stderr, wifi_clear_args.end, argv[0]);
+            return 1;
+        }
+
+        if (wifi_clear_args.confirm->count == 0) {
+            printf("This will clear all stored WiFi credentials.\n");
+            printf("The device will need to be re-provisioned.\n");
+            printf("\nTo proceed, run: wifi_clear --confirm\n");
+            return 1;
+        }
+
+        kd_common_clear_wifi_credentials();
+
+        kdc_heap_check_integrity("cmd-wifi-clear-pre-printf");
+        printf("WiFi credentials cleared.\n");
+        kdc_heap_check_integrity("cmd-wifi-clear-post-printf");
+        return 0;
     }
 
-    if (wifi_clear_args.confirm->count == 0) {
-        printf("This will clear all stored WiFi credentials.\n");
-        printf("The device will need to be re-provisioned.\n");
-        printf("\nTo proceed, run: wifi_clear --confirm\n");
-        return 1;
+    static struct {
+        struct arg_str* ssid;
+        struct arg_str* password;
+        struct arg_end* end;
+    } wifi_connect_args;
+
+    static int cmd_wifi_connect(int argc, char** argv) {
+        int nerrors = arg_parse(argc, argv, (void**)&wifi_connect_args);
+        if (nerrors != 0) {
+            arg_print_errors(stderr, wifi_connect_args.end, argv[0]);
+            return 1;
+        }
+
+        const char* ssid = wifi_connect_args.ssid->sval[0];
+        const char* password = wifi_connect_args.password->count > 0 ?
+            wifi_connect_args.password->sval[0] : nullptr;
+
+        esp_err_t err = kd_common_wifi_connect(ssid, password);
+        if (err != ESP_OK) {
+            printf("{\"error\":true,\"message\":\"Failed to connect: %s\"}\n", esp_err_to_name(err));
+            return 1;
+        }
+
+        printf("{\"error\":false,\"message\":\"Connecting to %s...\"}\n", ssid);
+        return 0;
     }
-
-    kd_common_clear_wifi_credentials();
-    printf("WiFi credentials cleared.\n");
-    return 0;
-}
-
-static struct {
-    struct arg_str* ssid;
-    struct arg_str* password;
-    struct arg_end* end;
-} wifi_connect_args;
-
-static int cmd_wifi_connect(int argc, char** argv) {
-    int nerrors = arg_parse(argc, argv, (void**)&wifi_connect_args);
-    if (nerrors != 0) {
-        arg_print_errors(stderr, wifi_connect_args.end, argv[0]);
-        return 1;
-    }
-
-    const char* ssid = wifi_connect_args.ssid->sval[0];
-    const char* password = wifi_connect_args.password->count > 0 ?
-        wifi_connect_args.password->sval[0] : nullptr;
-
-    esp_err_t err = kd_common_wifi_connect(ssid, password);
-    if (err != ESP_OK) {
-        printf("{\"error\":true,\"message\":\"Failed to connect: %s\"}\n", esp_err_to_name(err));
-        return 1;
-    }
-
-    printf("{\"error\":false,\"message\":\"Connecting to %s...\"}\n", ssid);
-    return 0;
-}
 
 }  // namespace
 
 void wifi_console_init() {
+    static bool initialized = false;
+    if (initialized) return;
+    initialized = true;
+
     wifi_clear_args.confirm = arg_lit0(NULL, "confirm", "Confirm credential clearing");
     wifi_clear_args.end = arg_end(1);
     kd_console_register_cmd_with_args("wifi_clear", "Clear stored WiFi credentials", cmd_wifi_clear, &wifi_clear_args);

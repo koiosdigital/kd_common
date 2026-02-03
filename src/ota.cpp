@@ -22,6 +22,8 @@
 #include <cstring>
 #include <memory>
 
+#include "kdc_heap_tracing.h"
+
 static const char* TAG = "kd_ota";
 
 namespace {
@@ -302,6 +304,7 @@ namespace {
         }
 
         check_in_progress.store(false);
+        kdc_heap_log_status("post-ota-handler-done");
 
         vTaskDelete(nullptr);  // Self-delete
     }
@@ -369,6 +372,7 @@ void ota_init() {
         ip_event_handler, nullptr);
 
     ESP_LOGI(TAG, "Initialized (event-driven)");
+    kdc_heap_log_status("post-ota-init");
 }
 
 bool ota_has_completed_boot_check() {

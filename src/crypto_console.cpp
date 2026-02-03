@@ -5,6 +5,7 @@
 
 #include "crypto.h"
 #include "kd_common.h"
+#include "kdc_heap_tracing.h"
 
 #include <esp_efuse.h>
 #include <esp_log.h>
@@ -21,7 +22,7 @@ static const char* TAG = "crypto_console";
 namespace {
 
     static int cmd_crypto_status(int argc, char** argv) {
-        console_out("{\"status\":%i,\"error\":false}\n", kd_common_crypto_get_state());
+        printf("{\"status\":%i,\"error\":false}\n", kd_common_crypto_get_state());
         return 0;
     }
 
@@ -29,20 +30,20 @@ namespace {
         size_t csr_len = 0;
         esp_err_t error = crypto_get_csr(nullptr, &csr_len);
         if (error != ESP_OK || csr_len == 0) {
-            console_out("{\"error_message\":\"no csr\",\"error\":true}\n");
+            printf("{\"error_message\":\"no csr\",\"error\":true}\n");
             return 0;
         }
 
         char* csr = (char*)malloc(csr_len);
         if (csr == nullptr) {
-            console_out("{\"error_message\":\"alloc failed\",\"error\":true}\n");
+            printf("{\"error_message\":\"alloc failed\",\"error\":true}\n");
             return 0;
         }
 
         error = crypto_get_csr(csr, &csr_len);
         if (error != ESP_OK) {
             free(csr);
-            console_out("{\"error_message\":\"no csr\",\"error\":true}\n");
+            printf("{\"error_message\":\"no csr\",\"error\":true}\n");
             return 0;
         }
 
@@ -52,14 +53,14 @@ namespace {
         char* encoded_csr = (char*)malloc(encoded_len + 1);
         if (encoded_csr == nullptr) {
             free(csr);
-            console_out("{\"error_message\":\"alloc failed\",\"error\":true}\n");
+            printf("{\"error_message\":\"alloc failed\",\"error\":true}\n");
             return 0;
         }
 
         mbedtls_base64_encode((unsigned char*)encoded_csr, encoded_len + 1, &encoded_len, (unsigned char*)csr, csr_len);
         free(csr);
 
-        console_out("{\"csr\":\"%s\",\"error\":false}\n", encoded_csr);
+        printf("{\"csr\":\"%s\",\"error\":false}\n", encoded_csr);
 
         free(encoded_csr);
         return 0;
@@ -107,7 +108,7 @@ namespace {
             ESP_LOGE(TAG, "failed to set device cert");
             return 1;
         }
-        console_out("{\"error\":false}\n");
+        printf("{\"error\":false}\n");
         return 0;
     }
 
@@ -115,25 +116,25 @@ namespace {
         size_t cert_len = 0;
         esp_err_t err = kd_common_get_device_cert(nullptr, &cert_len);
         if (err != ESP_OK || cert_len == 0) {
-            console_out("{\"error\":true,\"message\":\"No device certificate found\"}\n");
+            printf("{\"error\":true,\"message\":\"No device certificate found\"}\n");
             return 1;
         }
 
         char* cert = (char*)malloc(cert_len + 1);
         if (!cert) {
-            console_out("{\"error\":true,\"message\":\"Memory allocation failed\"}\n");
+            printf("{\"error\":true,\"message\":\"Memory allocation failed\"}\n");
             return 1;
         }
 
         err = kd_common_get_device_cert(cert, &cert_len);
         if (err != ESP_OK) {
             free(cert);
-            console_out("{\"error\":true,\"message\":\"Failed to read certificate\"}\n");
+            printf("{\"error\":true,\"message\":\"Failed to read certificate\"}\n");
             return 1;
         }
         cert[cert_len] = '\0';
 
-        console_out("%s\n", cert);
+        printf("%s\n", cert);
         free(cert);
         return 0;
     }
@@ -141,10 +142,10 @@ namespace {
     static int cmd_get_ds_params(int argc, char** argv) {
         char* json = crypto_get_ds_params_json();
         if (json == nullptr) {
-            console_out("{\"error\":true,\"message\":\"No DS params found\"}\n");
+            printf("{\"error\":true,\"message\":\"No DS params found\"}\n");
             return 1;
         }
-        console_out("%s\n", json);
+        printf("%s\n", json);
         free(json);
         return 0;
     }
@@ -165,63 +166,63 @@ namespace {
         int block = set_ds_key_block_args.block->ival[0];
 
         if (block < 4 || block > 9) {
-            console_out("{\"error\":true,\"message\":\"Invalid block. Valid range: 4-9 (KEY0-KEY5)\"}\n");
+            printf("{\"error\":true,\"message\":\"Invalid block. Valid range: 4-9 (KEY0-KEY5)\"}\n");
             return 1;
         }
 
         if (set_ds_key_block_args.confirm->count == 0) {
-            console_out("\n");
-            console_out("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n");
-            console_out("!!                    CRITICAL WARNING                         !!\n");
-            console_out("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n");
-            console_out("\n");
-            console_out("This command will:\n");
-            console_out("  1. Change the DS key block to EFUSE_BLK_KEY%d\n", block - 4);
-            console_out("  2. PERMANENTLY DELETE all crypto data (CSR, certificate, DS params)\n");
-            console_out("  3. Reboot the device\n");
-            console_out("\n");
-            console_out("After reboot, the device will generate a NEW private key and burn\n");
-            console_out("it to the new eFuse block. This is IRREVERSIBLE.\n");
-            console_out("\n");
-            console_out("The device will need to be RE-PROVISIONED with a new certificate.\n");
-            console_out("The old certificate will NO LONGER WORK.\n");
-            console_out("\n");
-            console_out("If no valid HMAC key exists in the target block, this WILL\n");
-            console_out("render the device PERMANENTLY UNUSABLE for mTLS authentication.\n");
-            console_out("\n");
-            console_out("To proceed, run: set_ds_key_block %d --confirm\n", block);
-            console_out("\n");
+            printf("\n");
+            printf("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n");
+            printf("!!                    CRITICAL WARNING                         !!\n");
+            printf("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n");
+            printf("\n");
+            printf("This command will:\n");
+            printf("  1. Change the DS key block to EFUSE_BLK_KEY%d\n", block - 4);
+            printf("  2. PERMANENTLY DELETE all crypto data (CSR, certificate, DS params)\n");
+            printf("  3. Reboot the device\n");
+            printf("\n");
+            printf("After reboot, the device will generate a NEW private key and burn\n");
+            printf("it to the new eFuse block. This is IRREVERSIBLE.\n");
+            printf("\n");
+            printf("The device will need to be RE-PROVISIONED with a new certificate.\n");
+            printf("The old certificate will NO LONGER WORK.\n");
+            printf("\n");
+            printf("If no valid HMAC key exists in the target block, this WILL\n");
+            printf("render the device PERMANENTLY UNUSABLE for mTLS authentication.\n");
+            printf("\n");
+            printf("To proceed, run: set_ds_key_block %d --confirm\n", block);
+            printf("\n");
             return 1;
         }
 
         if (crypto_is_key_block_burnt(block)) {
-            console_out("\n");
-            console_out("WARNING: EFUSE_BLK_KEY%d already has a burnt key!\n", block - 4);
-            console_out("Purpose: %d\n", esp_efuse_get_key_purpose(static_cast<esp_efuse_block_t>(block)));
-            console_out("\n");
-            console_out("If this key was not burnt for DS/HMAC_DOWN_DIGITAL_SIGNATURE,\n");
-            console_out("the device will fail to generate a valid signing key.\n");
-            console_out("\n");
+            printf("\n");
+            printf("WARNING: EFUSE_BLK_KEY%d already has a burnt key!\n", block - 4);
+            printf("Purpose: %d\n", esp_efuse_get_key_purpose(static_cast<esp_efuse_block_t>(block)));
+            printf("\n");
+            printf("If this key was not burnt for DS/HMAC_DOWN_DIGITAL_SIGNATURE,\n");
+            printf("the device will fail to generate a valid signing key.\n");
+            printf("\n");
         }
 
         uint8_t current_block = crypto_get_ds_key_block();
-        console_out("Current DS key block: EFUSE_BLK_KEY%d (%d)\n", current_block - 4, current_block);
-        console_out("New DS key block: EFUSE_BLK_KEY%d (%d)\n", block - 4, block);
+        printf("Current DS key block: EFUSE_BLK_KEY%d (%d)\n", current_block - 4, current_block);
+        printf("New DS key block: EFUSE_BLK_KEY%d (%d)\n", block - 4, block);
 
         esp_err_t err = crypto_set_ds_key_block(block);
         if (err != ESP_OK) {
-            console_out("{\"error\":true,\"message\":\"Failed to set DS key block: %s\"}\n", esp_err_to_name(err));
+            printf("{\"error\":true,\"message\":\"Failed to set DS key block: %s\"}\n", esp_err_to_name(err));
             return 1;
         }
 
-        console_out("Clearing all crypto data...\n");
+        printf("Clearing all crypto data...\n");
         err = crypto_clear_all_data();
         if (err != ESP_OK) {
-            console_out("{\"error\":true,\"message\":\"Failed to clear crypto data: %s\"}\n", esp_err_to_name(err));
+            printf("{\"error\":true,\"message\":\"Failed to clear crypto data: %s\"}\n", esp_err_to_name(err));
             return 1;
         }
 
-        console_out("DS key block changed successfully. Rebooting in 2 seconds...\n");
+        printf("DS key block changed successfully. Rebooting in 2 seconds...\n");
         vTaskDelay(pdMS_TO_TICKS(2000));
         esp_restart();
 
@@ -231,28 +232,29 @@ namespace {
     static int cmd_check_key_blocks(int argc, char** argv) {
         uint8_t current_block = crypto_get_ds_key_block();
 
-        console_out("\neFuse Key Block Status:\n");
-        console_out("%-8s %-6s %s\n", "Block", "ID", "Status");
-        console_out("%-8s %-6s %s\n", "-----", "--", "------");
+        printf("\neFuse Key Block Status:\n");
+        printf("%-8s %-6s %s\n", "Block", "ID", "Status");
+        printf("%-8s %-6s %s\n", "-----", "--", "------");
 
         for (int block = DS_KEY_BLOCK_MIN; block <= DS_KEY_BLOCK_MAX; block++) {
             bool is_burnt = crypto_is_key_block_burnt(block);
             bool is_current = (block == current_block);
 
-            console_out("KEY%d     %-6d %s%s\n",
+            printf("KEY%d     %-6d %s%s\n",
                 block - DS_KEY_BLOCK_MIN,
                 block,
                 is_burnt ? "BURNT" : "EMPTY",
                 is_current ? " <-- current" : "");
         }
 
-        console_out("\n");
+        printf("\n");
         return 0;
     }
 
 }  // namespace
 
 void crypto_console_init() {
+    kdc_heap_log_status("pre-crypto-console-start");
     kd_console_register_cmd("crypto_status", "Get the current state of the crypto module", cmd_crypto_status);
     kd_console_register_cmd("get_csr", "Get the CSR associated with the device internal private key", cmd_get_csr);
 
@@ -270,7 +272,7 @@ void crypto_console_init() {
 
     kd_console_register_cmd("check_key_blocks", "Show status of all eFuse key blocks (KEY0-KEY5)", cmd_check_key_blocks);
 
-    ESP_LOGI(TAG, "Crypto console commands registered");
+    kdc_heap_log_status("post-crypto-console-start");
 }
 
 #endif // CONFIG_KD_COMMON_CONSOLE_ENABLE

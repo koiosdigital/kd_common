@@ -22,7 +22,7 @@ namespace crypto {
     constexpr const char* NVS_KEY_CLAIM_TOKEN = "claim_token";
     constexpr const char* NVS_KEY_DS_KEY_BLOCK = "ds_key_blk";
 
-    constexpr size_t KEY_SIZE = 2048;
+    constexpr size_t KEY_SIZE = 4096;
     constexpr size_t PEM_BUFFER_SIZE = 12288;  // 12KB for fullchain (leaf + intermediates)
 
     // Get current DS key block (reads from NVS, defaults to EFUSE_BLK_KEY3)

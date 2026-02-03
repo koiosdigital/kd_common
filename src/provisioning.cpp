@@ -12,12 +12,14 @@
 #include <cstring>
 
 #include "kd_common.h"
+#include "kdc_heap_tracing.h"
 #include "ble_console.h"
 
 static const char* TAG = "kd_ble_prov";
 
-namespace {
-    struct ProvisioningState {
+namespace kd::provisioning {
+
+    struct State {
         bool ever_connected = false;
         bool provisioning_started = false;
         bool is_wifi_connected = false;
@@ -27,9 +29,9 @@ namespace {
         network_prov_security2_params_t srp_params = { 0 };
     };
 
-    ProvisioningState state;
+    State state;
 
-    void start_provisioning_internal() {
+    void start_internal() {
         if (state.provisioning_started) {
             ESP_LOGD(TAG, "Provisioning already started");
             return;
@@ -106,14 +108,29 @@ namespace {
 
         state.provisioning_started = true;
         ESP_LOGI(TAG, "BLE provisioning started, S2 (%s / %s)", "koiosdigital", state.srp_password);
+        kdc_heap_log_status("post-provision-start");
     }
 
-    void provisioning_event_handler(void* arg, esp_event_base_t event_base,
+    void event_handler(void* arg, esp_event_base_t event_base,
         int32_t event_id, void* event_data) {
+        // Check for WiFi start to potentially restart provisioning after credential clear
+        if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
+            bool provisioned = false;
+            network_prov_mgr_is_wifi_provisioned(&provisioned);
+            if (!provisioned && !state.provisioning_started) {
+                // Reset SRP password so a new one is generated
+                state.srp_password[0] = '\0';
+                ESP_LOGI(TAG, "WiFi started but not provisioned - starting BLE");
+                start_internal();
+            }
+            return;
+        }
+
         if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
             state.is_wifi_connected = false;
             // Reconnect unless waiting for new provisioning credentials
             if (!state.prov_cred_failed) {
+                vTaskDelay(pdMS_TO_TICKS(2500));
                 esp_wifi_connect();
             }
         }
@@ -122,6 +139,7 @@ namespace {
             state.is_wifi_connected = true;
             state.prov_cred_failed = false;
             // Provisioning will auto-stop via WIFI_PROV_END event
+            kdc_heap_log_status("provision-sta-got-ip");
 
         }
         else if (event_base == NETWORK_PROV_EVENT) {
@@ -129,37 +147,43 @@ namespace {
             case NETWORK_PROV_WIFI_CRED_RECV:
                 state.prov_cred_failed = false;
                 ESP_LOGI(TAG, "Credentials received");
+                kdc_heap_log_status("provision-cred-recv");
                 break;
 
             case NETWORK_PROV_WIFI_CRED_FAIL:
                 state.prov_cred_failed = true;
                 ESP_LOGW(TAG, "Credentials failed");
                 network_prov_mgr_reset_wifi_sm_state_on_failure();
+                kdc_heap_log_status("provision-cred-fail");
                 break;
 
             case NETWORK_PROV_END:
                 ESP_LOGI(TAG, "Provisioning ended");
                 network_prov_mgr_deinit();  // This frees BT memory via scheme handler
                 state.provisioning_started = false;
+                kdc_heap_log_status("post-provision-end");
                 break;
             case NETWORK_PROV_DEINIT:
                 free(const_cast<char*>(state.srp_params.salt));
                 free(const_cast<char*>(state.srp_params.verifier));
                 state.srp_params = { 0 };
+                kdc_heap_log_status("provision-deinit");
                 break;
             }
         }
     }
 
-}  // namespace
+}  // namespace kd::provisioning
 
 //MARK: Public API
 
 void kd_common_set_provisioning_srp_password_format(ProvisioningSRPPasswordFormat_t format) {
-    state.srp_format = format;
+    kd::provisioning::state.srp_format = format;
 }
 
 char* kd_common_provisioning_get_srp_password() {
+    using namespace kd::provisioning;
+
     if (state.srp_password[0] != '\0') {
         return state.srp_password;
     }
@@ -207,11 +231,11 @@ char* kd_common_provisioning_get_srp_password() {
 }
 
 bool kd_common_is_wifi_connected() {
-    return state.is_wifi_connected;
+    return kd::provisioning::state.is_wifi_connected;
 }
 
 void kd_common_start_provisioning() {
-    start_provisioning_internal();
+    kd::provisioning::start_internal();
 }
 
 //MARK: Internal API
@@ -220,9 +244,10 @@ void provisioning_init() {
     ESP_LOGI(TAG, "Initializing");
 
     // Register event handlers for WiFi state management
-    esp_event_handler_register(NETWORK_PROV_EVENT, ESP_EVENT_ANY_ID, &provisioning_event_handler, nullptr);
-    esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_STA_DISCONNECTED, &provisioning_event_handler, nullptr);
-    esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &provisioning_event_handler, nullptr);
+    esp_event_handler_register(NETWORK_PROV_EVENT, ESP_EVENT_ANY_ID, &kd::provisioning::event_handler, nullptr);
+    esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_STA_DISCONNECTED, &kd::provisioning::event_handler, nullptr);
+    esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_STA_START, &kd::provisioning::event_handler, nullptr);
+    esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &kd::provisioning::event_handler, nullptr);
 
     // Check if already provisioned (requires wifi to be initialized)
     bool provisioned = false;
@@ -230,7 +255,7 @@ void provisioning_init() {
 
     if (!provisioned) {
         ESP_LOGI(TAG, "Not provisioned - starting BLE provisioning");
-        start_provisioning_internal();
+        kd::provisioning::start_internal();
     }
     else {
         ESP_LOGI(TAG, "Already provisioned - skipping BLE");
@@ -238,5 +263,5 @@ void provisioning_init() {
 }
 
 void provisioning_start() {
-    start_provisioning_internal();
+    kd::provisioning::start_internal();
 }

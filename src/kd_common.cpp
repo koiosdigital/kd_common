@@ -1,4 +1,5 @@
 #include "kd_common.h"
+#include "kdc_heap_tracing.h"
 
 #include <nvs_flash.h>
 #include <esp_log.h>
@@ -48,6 +49,8 @@ void kd_common_init() {
 #ifdef CONFIG_KD_COMMON_API_ENABLE
     api_init();
 #endif
+
+    kdc_heap_log_status("post-kd-common-init");
 }
 
 void kd_common_reverse_bytes(uint8_t* data, size_t len) {

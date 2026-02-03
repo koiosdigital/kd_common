@@ -1,6 +1,7 @@
 // NTP time synchronization with timezone support
 #include "ntp.h"
 #include "kd_common.h"
+#include "kdc_heap_tracing.h"
 
 #include <cstring>
 #include <esp_log.h>
@@ -16,7 +17,7 @@
 // Define NTP event base
 ESP_EVENT_DEFINE_BASE(KD_NTP_EVENTS);
 
-#define NTP_NVS_NAMESPACE "ntp_cfg2"  // Bumped to invalidate old struct layout
+#define NTP_NVS_NAMESPACE "ntp_cfg"
 
 static const char* TAG = "ntp";
 
@@ -112,6 +113,8 @@ namespace {
 
         // Post sync complete event
         esp_event_post(KD_NTP_EVENTS, KD_NTP_EVENT_SYNC_COMPLETE, nullptr, 0, 0);
+
+        kdc_heap_log_status("post-ntp-sync");
     }
 
     void start_sntp() {
@@ -277,4 +280,6 @@ void ntp_apply_timezone(const char* tzname) {
 
     save_config_to_nvs();
     apply_timezone_local();
+
+    kdc_heap_log_status("post-ntp-apply-tz");
 }

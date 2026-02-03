@@ -75,8 +75,6 @@ char* kd_common_provisioning_get_srp_password();
 void kd_common_set_provisioning_srp_password_format(ProvisioningSRPPasswordFormat_t format);
 void kd_common_start_provisioning();  // Start BLE provisioning manually (e.g., button hold)
 
-char* kd_common_run_command(char* input, int* return_code);
-
 #ifdef CONFIG_KD_COMMON_CONSOLE_ENABLE
 // Console command registration for external components
 typedef int (*kd_console_cmd_func_t)(int argc, char** argv);
@@ -86,9 +84,6 @@ esp_err_t kd_console_register_cmd(const char* command, const char* help,
 
 esp_err_t kd_console_register_cmd_with_args(const char* command, const char* help,
     kd_console_cmd_func_t func, void* argtable);
-
-// Formatted output (respects capture mode for kd_common_run_command)
-int console_out(const char* format, ...) __attribute__((format(printf, 1, 2)));
 #endif
 
 // WiFi functions

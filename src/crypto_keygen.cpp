@@ -24,6 +24,7 @@
 #include <memory>
 
 #include "kd_common.h"
+#include "kdc_heap_tracing.h"
 
 static const char* TAG = "kd_crypto_keygen";
 
@@ -213,9 +214,7 @@ static void crypto_setup_task(void* pvParameter) {
     uint8_t iv[16] = { 0 };
     uint8_t hmac[32] = { 0 };
 
-    heap_caps_check_integrity_all(true);
-    ESP_LOGW(TAG, "heap check before all");
-    ESP_LOGI(TAG, "free: %d, int: %d", esp_get_free_heap_size(), esp_get_free_internal_heap_size());
+    kdc_heap_log_status("keygen-start");
 
     esp_ds_data_t* encrypted = nullptr;
     esp_ds_p_data_t* ds_params = nullptr;
@@ -237,9 +236,7 @@ static void crypto_setup_task(void* pvParameter) {
         goto cleanup;
     }
 
-    heap_caps_check_integrity_all(true);
-    ESP_LOGW(TAG, "heap check after rsa gen");
-    ESP_LOGI(TAG, "free: %d, int: %d", esp_get_free_heap_size(), esp_get_free_internal_heap_size());
+    kdc_heap_log_status("post-rsa");
 
     // Store CSR
     if (store_csr(key_id) != ESP_OK) {
@@ -247,13 +244,8 @@ static void crypto_setup_task(void* pvParameter) {
         psa_destroy_key(key_id);
         goto cleanup;
     }
-    else {
-        ESP_LOGI(TAG, "store csr OK!");
-    }
 
-    heap_caps_check_integrity_all(true);
-    ESP_LOGW(TAG, "heap check after csr gen");
-    ESP_LOGI(TAG, "free: %d, int: %d", esp_get_free_heap_size(), esp_get_free_internal_heap_size());
+    kdc_heap_log_status("post-csr");
 
     // Compute DS params
     ds_params = (esp_ds_p_data_t*)calloc(1, sizeof(esp_ds_p_data_t));
@@ -262,9 +254,6 @@ static void crypto_setup_task(void* pvParameter) {
         psa_destroy_key(key_id);
         goto cleanup;
     }
-    else {
-        ESP_LOGI(TAG, "ds alloc ok!");
-    }
 
     if (psa_key_to_ds_params(key_id, ds_params) != ESP_OK) {
         ESP_LOGE(TAG, "PSA to DS failed");
@@ -272,14 +261,8 @@ static void crypto_setup_task(void* pvParameter) {
         psa_destroy_key(key_id);
         goto cleanup;
     }
-    else {
-        ESP_LOGI(TAG, "ds convert ok!");
-    }
 
-    heap_caps_check_integrity_all(true);
-    ESP_LOGW(TAG, "heap check after ds conversion");
-    ESP_LOGI(TAG, "free: %d, int: %d", esp_get_free_heap_size(), esp_get_free_internal_heap_size());
-
+    kdc_heap_log_status("post-ds-convert");
 
     // Generate IV and HMAC key
     esp_fill_random(iv, sizeof(iv));
@@ -294,6 +277,8 @@ static void crypto_setup_task(void* pvParameter) {
     }
 
     esp_ds_encrypt_params(encrypted, iv, ds_params, hmac);
+
+    kdc_heap_log_status("post-ds-encrypt");
     crypto_storage_store_ds_params(encrypted->c, iv, params->ds_key_block, (KEY_SIZE / 32) - 1);
 
     heap_caps_free(encrypted);
@@ -305,9 +290,7 @@ static void crypto_setup_task(void* pvParameter) {
 
     psa_destroy_key(key_id);
 
-    heap_caps_check_integrity_all(true);
-    ESP_LOGW(TAG, "heap check after all");
-    ESP_LOGI(TAG, "free: %d, int: %d", esp_get_free_heap_size(), esp_get_free_internal_heap_size());
+    kdc_heap_log_status("post-keygen");
     params->result = ESP_OK;
 
 cleanup:
@@ -327,7 +310,7 @@ esp_err_t ensure_key_exists() {
 
     if (has_fuses) {
         ESP_LOGI(TAG, "skipping keygen, key already burnt to block: %d", (ds_key_block - 4));
-        return ESP_OK;
+        return kd_common_crypto_test_ds_signing();
     }
 
     keygen_mutex = xSemaphoreCreateBinary();
@@ -350,7 +333,8 @@ esp_err_t ensure_key_exists() {
         esp_restart();
     }
 
-    return ESP_OK;
+    kdc_heap_log_status("post-crypto-keygen");
+    return kd_common_crypto_test_ds_signing();
 }
 
 #endif // CONFIG_KD_COMMON_CRYPTO_ENABLE
