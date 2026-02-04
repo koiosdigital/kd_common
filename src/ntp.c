@@ -1,7 +1,6 @@
 // NTP time synchronization with timezone support
 #include "ntp.h"
 #include "kd_common.h"
-#include "kdc_heap_tracing.h"
 
 #include <string.h>
 #include <esp_log.h>
@@ -111,8 +110,6 @@ static void time_sync_callback(struct timeval* tv) {
 
     // Post sync complete event
     esp_event_post(KD_NTP_EVENTS, KD_NTP_EVENT_SYNC_COMPLETE, NULL, 0, 0);
-
-    kdc_heap_log_status("post-ntp-sync");
 }
 
 static void start_sntp(void) {
@@ -279,6 +276,4 @@ void ntp_apply_timezone(const char* tzname) {
 
     save_config_to_nvs();
     apply_timezone_local();
-
-    kdc_heap_log_status("post-ntp-apply-tz");
 }

@@ -80,12 +80,6 @@ static void wifi_event_handler(void* arg, esp_event_base_t base, int32_t id, voi
     }
 }
 
-static esp_err_t root_handler(httpd_req_t* req) {
-    const char* response = "Welcome to the KD API!";
-    httpd_resp_send(req, response, strlen(response));
-    return ESP_OK;
-}
-
 static esp_err_t about_handler(httpd_req_t* req) {
     const esp_app_desc_t* app_desc = esp_app_get_description();
 
@@ -336,14 +330,6 @@ static void register_internal_handlers(void) {
         .user_ctx = NULL
     };
     httpd_register_uri_handler(s_kd_api_server, &options_uri);
-
-    static httpd_uri_t root_uri = {
-        .uri = "/",
-        .method = HTTP_GET,
-        .handler = root_handler,
-        .user_ctx = NULL
-    };
-    httpd_register_uri_handler(s_kd_api_server, &root_uri);
 }
 
 void api_init(void) {

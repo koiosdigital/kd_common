@@ -12,7 +12,6 @@
 #include <stdio.h>
 
 #include "kd_common.h"
-#include "kdc_heap_tracing.h"
 #include "nvs_helper.h"
 #include "network_provisioning/manager.h"
 
@@ -62,11 +61,8 @@ void kd_common_wifi_disconnect(void) {
 }
 
 void kd_common_clear_wifi_credentials(void) {
-    kdc_heap_check_integrity("wifi-clear-start");
-
     s_pending_restart = true;
     network_prov_mgr_reset_wifi_provisioning();
-    kdc_heap_check_integrity("wifi-clear-post-reset");
 }
 
 void wifi_init(void) {
@@ -100,8 +96,6 @@ void wifi_start(void) {
 
     esp_wifi_start();
     esp_wifi_connect();  // Connect directly (reconnects handled by event handler)
-
-    kdc_heap_log_status("post-wifi-start");
 }
 
 void wifi_restart(void) {
@@ -215,10 +209,7 @@ static struct {
 } s_wifi_clear_args;
 
 static int cmd_wifi_clear(int argc, char** argv) {
-    kdc_heap_check_integrity("cmd-wifi-clear-entry");
-
     int nerrors = arg_parse(argc, argv, (void**)&s_wifi_clear_args);
-    kdc_heap_check_integrity("cmd-wifi-clear-post-argparse");
 
     if (nerrors != 0) {
         arg_print_errors(stderr, s_wifi_clear_args.end, argv[0]);
@@ -234,9 +225,7 @@ static int cmd_wifi_clear(int argc, char** argv) {
 
     kd_common_clear_wifi_credentials();
 
-    kdc_heap_check_integrity("cmd-wifi-clear-pre-printf");
     printf("WiFi credentials cleared.\n");
-    kdc_heap_check_integrity("cmd-wifi-clear-post-printf");
     return 0;
 }
 

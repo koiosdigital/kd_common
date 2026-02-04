@@ -4,7 +4,6 @@
 
 #include "crypto_internal.h"
 #include "crypto_console.h"
-#include "kdc_heap_tracing.h"
 
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
@@ -320,12 +319,10 @@ esp_err_t kd_common_crypto_test_ds_signing(void) {
 
     if (status != PSA_SUCCESS) {
         ESP_LOGE(TAG, "=== SIGNATURE VERIFICATION FAILED: %d ===", status);
-        kdc_heap_log_status("post-ds-verify-fail");
         return ESP_FAIL;
     }
 
     ESP_LOGI(TAG, "=== SIGNATURE VERIFICATION PASSED ===");
-    kdc_heap_log_status("post-ds-verify-test");
     return ESP_OK;
 }
 

@@ -5,7 +5,6 @@
 
 #include "crypto.h"
 #include "kd_common.h"
-#include "kdc_heap_tracing.h"
 
 #include <esp_efuse.h>
 #include <esp_log.h>
@@ -329,7 +328,6 @@ static int cmd_check_key_blocks(int argc, char** argv) {
 }
 
 void crypto_console_init(void) {
-    kdc_heap_log_status("pre-crypto-console-start");
     kd_console_register_cmd("crypto_status", "Get the current state of the crypto module", cmd_crypto_status);
     kd_console_register_cmd("get_csr", "Get the CSR (raw PEM output)", cmd_get_csr);
 
@@ -352,8 +350,6 @@ void crypto_console_init(void) {
     kd_console_register_cmd_with_args("set_ds_key_block", "Set the eFuse block for DS key storage (4-9 = KEY0-KEY5)", cmd_set_ds_key_block, &s_set_ds_key_block_args);
 
     kd_console_register_cmd("check_key_blocks", "Show status of all eFuse key blocks (KEY0-KEY5)", cmd_check_key_blocks);
-
-    kdc_heap_log_status("post-crypto-console-start");
 }
 
 #endif // CONFIG_KD_COMMON_CONSOLE_ENABLE

@@ -20,7 +20,6 @@
 #include <assert.h>
 
 #include "kd_common.h"
-#include "kdc_heap_tracing.h"
 
 #if SOC_USB_SERIAL_JTAG_SUPPORTED
 #if !CONFIG_ESP_CONSOLE_SECONDARY_NONE
@@ -190,7 +189,6 @@ esp_err_t kd_console_register_cmd_with_args(const char* command, const char* hel
 }
 
 void console_init(void) {
-    kdc_heap_log_status("pre-console-start");
     esp_console_repl_t* repl = NULL;
     esp_console_repl_config_t repl_config = ESP_CONSOLE_REPL_CONFIG_DEFAULT();
 
@@ -213,7 +211,6 @@ void console_init(void) {
 #endif
 
     ESP_ERROR_CHECK(esp_console_start_repl(repl));
-    kdc_heap_log_status("post-console-start");
 }
 
 #endif // CONFIG_KD_COMMON_CONSOLE_ENABLE

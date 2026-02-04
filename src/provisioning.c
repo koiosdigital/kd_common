@@ -12,7 +12,6 @@
 #include <string.h>
 
 #include "kd_common.h"
-#include "kdc_heap_tracing.h"
 #include "ble_console.h"
 
 static const char* TAG = "kd_ble_prov";
@@ -115,7 +114,6 @@ static void start_provisioning_internal(void) {
 
     s_state.provisioning_started = true;
     ESP_LOGI(TAG, "BLE provisioning started, S2 (%s / %s)", "koiosdigital", s_state.srp_password);
-    kdc_heap_log_status("post-provision-start");
 }
 
 static void provisioning_event_handler(void* arg, esp_event_base_t event_base,
@@ -149,35 +147,29 @@ static void provisioning_event_handler(void* arg, esp_event_base_t event_base,
         s_state.is_wifi_connected = true;
         s_state.prov_cred_failed = false;
         // Provisioning will auto-stop via WIFI_PROV_END event
-        kdc_heap_log_status("provision-sta-got-ip");
-
     }
     else if (event_base == NETWORK_PROV_EVENT) {
         switch (event_id) {
         case NETWORK_PROV_WIFI_CRED_RECV:
             s_state.prov_cred_failed = false;
             ESP_LOGI(TAG, "Credentials received");
-            kdc_heap_log_status("provision-cred-recv");
             break;
 
         case NETWORK_PROV_WIFI_CRED_FAIL:
             s_state.prov_cred_failed = true;
             ESP_LOGW(TAG, "Credentials failed");
             network_prov_mgr_reset_wifi_sm_state_on_failure();
-            kdc_heap_log_status("provision-cred-fail");
             break;
 
         case NETWORK_PROV_END:
             ESP_LOGI(TAG, "Provisioning ended");
             network_prov_mgr_deinit();  // This frees BT memory via scheme handler
             s_state.provisioning_started = false;
-            kdc_heap_log_status("post-provision-end");
             break;
         case NETWORK_PROV_DEINIT:
             free((void*)s_state.srp_params.salt);
             free((void*)s_state.srp_params.verifier);
             memset(&s_state.srp_params, 0, sizeof(s_state.srp_params));
-            kdc_heap_log_status("provision-deinit");
             break;
         }
     }

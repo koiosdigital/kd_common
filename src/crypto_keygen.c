@@ -25,7 +25,6 @@
 #include <stdlib.h>
 
 #include "kd_common.h"
-#include "kdc_heap_tracing.h"
 
 static const char* TAG = "kd_crypto_keygen";
 
@@ -220,8 +219,6 @@ static void crypto_setup_task(void* pvParameter) {
     uint8_t iv[16] = { 0 };
     uint8_t hmac[32] = { 0 };
 
-    kdc_heap_log_status("keygen-start");
-
     esp_ds_data_t* encrypted = NULL;
     esp_ds_p_data_t* ds_params = NULL;
 
@@ -242,16 +239,12 @@ static void crypto_setup_task(void* pvParameter) {
         goto cleanup;
     }
 
-    kdc_heap_log_status("post-rsa");
-
     // Store CSR
     if (store_csr(key_id) != ESP_OK) {
         ESP_LOGE(TAG, "store csr failed");
         psa_destroy_key(key_id);
         goto cleanup;
     }
-
-    kdc_heap_log_status("post-csr");
 
     // Compute DS params
     ds_params = (esp_ds_p_data_t*)calloc(1, sizeof(esp_ds_p_data_t));
@@ -268,8 +261,6 @@ static void crypto_setup_task(void* pvParameter) {
         goto cleanup;
     }
 
-    kdc_heap_log_status("post-ds-convert");
-
     // Generate IV and HMAC key
     esp_fill_random(iv, sizeof(iv));
     esp_fill_random(hmac, sizeof(hmac));
@@ -283,8 +274,6 @@ static void crypto_setup_task(void* pvParameter) {
     }
 
     esp_ds_encrypt_params(encrypted, iv, ds_params, hmac);
-
-    kdc_heap_log_status("post-ds-encrypt");
     crypto_storage_store_ds_params(encrypted->c, iv, params->ds_key_block, (CRYPTO_KEY_SIZE / 32) - 1);
 
     heap_caps_free(encrypted);
@@ -295,8 +284,6 @@ static void crypto_setup_task(void* pvParameter) {
     esp_efuse_set_read_protect(params->ds_key_block);
 
     psa_destroy_key(key_id);
-
-    kdc_heap_log_status("post-keygen");
     params->result = ESP_OK;
 
 cleanup:
@@ -339,7 +326,6 @@ esp_err_t ensure_key_exists(void) {
         esp_restart();
     }
 
-    kdc_heap_log_status("post-crypto-keygen");
     return kd_common_crypto_test_ds_signing();
 }
 
