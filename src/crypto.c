@@ -120,16 +120,16 @@ static void crypto_log_provisioning_info(void) {
     CryptoState_t state = kd_common_crypto_get_state();
 
     // Parseable pattern for provisioner script
-    printf("[CRYPTO_STATUS] %d\n", state);
+    printf("\n\n[CRYPTO_STATUS] %d\n\n", state);
 
     if (state == CRYPTO_STATE_VALID_CSR || state == CRYPTO_STATE_VALID_CERT) {
         // Get and print CSR if available
         size_t csr_len = 0;
         if (crypto_get_csr(NULL, &csr_len) == ESP_OK && csr_len > 0) {
-            char* csr = (char*)malloc(csr_len);
+            char* csr = (char*)heap_caps_malloc_prefer(csr_len, 2, MALLOC_CAP_SPIRAM, MALLOC_CAP_8BIT);
             if (csr != NULL && crypto_get_csr(csr, &csr_len) == ESP_OK) {
-                printf("[CSR_BEGIN]\n%s[CSR_END]\n", csr);
-                free(csr);
+                printf("\n\n[CSR_BEGIN]\n%s[CSR_END]\n\n", csr);
+                heap_caps_free(csr);
             }
         }
     }

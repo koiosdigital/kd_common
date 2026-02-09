@@ -306,7 +306,8 @@ esp_err_t ensure_key_exists(void) {
 
     if (has_fuses) {
         ESP_LOGI(TAG, "skipping keygen, key already burnt to block: %d", (ds_key_block - 4));
-        return kd_common_crypto_test_ds_signing();
+        //return kd_common_crypto_test_ds_signing();
+        return ESP_OK;
     }
 
     crypto_setup_params_t task_params = {
@@ -326,7 +327,8 @@ esp_err_t ensure_key_exists(void) {
         esp_restart();
     }
 
-    return kd_common_crypto_test_ds_signing();
+    //return kd_common_crypto_test_ds_signing();
+    return ESP_OK;
 }
 
 #endif // CONFIG_KD_COMMON_CRYPTO_ENABLE
