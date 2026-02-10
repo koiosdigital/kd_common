@@ -1,10 +1,20 @@
 #include <stdio.h>
 #include "embedded_tz_db.h"
 
-static const char* TZ_DATA_VERS = "2024b-2";
+/**
+ * Timezone alias structure
+ * Contains IANA Zone Alias/link and an index to the associated zone.
+ **/
+typedef struct {
+    const char* alias;
+    unsigned short zoneIndex; // Index into embedded_tz_db_zones[]
+    unsigned char hash;       // 8-bit hash of the alias name
+} embeddedTzAlias_t;
+
+static const char* TZ_DATA_VERS = "2025b-0ubuntu0.24.04.1";
 
 #if TZ_DB_USE_SHORT_LIST
-static const embeddedTz_t embedded_tz_db_zones[139] = {
+static const embeddedTz_t embedded_tz_db_zones[TZ_DB_NUM_ZONES] = {
   {"Etc/GMT+12", "<-12>12"},
   {"Etc/GMT+11", "<-11>11"},
   {"America/Adak", "HST10HDT,M3.2.0,M11.1.0"},
@@ -31,7 +41,7 @@ static const embeddedTz_t embedded_tz_db_zones[139] = {
   {"America/Havana", "CST5CDT,M3.2.0/0,M11.1.0/1"},
   {"America/Indiana/Indianapolis", "EST5EDT,M3.2.0,M11.1.0"},
   {"America/Grand_Turk", "EST5EDT,M3.2.0,M11.1.0"},
-  {"America/Asuncion", "<-04>4<-03>,M10.1.0/0,M3.4.0/0"},
+  {"America/Asuncion", "<-03>3"},
   {"America/Halifax", "AST4ADT,M3.2.0,M11.1.0"},
   {"America/Caracas", "<-04>4"},
   {"America/Cuiaba", "<-04>4"},
@@ -50,11 +60,12 @@ static const embeddedTz_t embedded_tz_db_zones[139] = {
   {"Etc/GMT+2", "<-02>2"},
   {"Atlantic/Azores", "<-01>1<+00>,M3.5.0/0,M10.5.0/1"},
   {"Atlantic/Cape_Verde", "<-01>1"},
+  {"Etc/GMT", "GMT0"},
   {"Etc/UTC", "UTC0"},
   {"Europe/London", "GMT0BST,M3.5.0/1,M10.5.0"},
   {"Africa/Abidjan", "GMT0"},
   {"Africa/Sao_Tome", "GMT0"},
-  {"Africa/Casablanca", "<+01>-1"},
+  {"Africa/Casablanca", "<+00>0<+01>,0/0,J365/25"},
   {"Europe/Berlin", "CET-1CEST,M3.5.0,M10.5.0/3"},
   {"Europe/Budapest", "CET-1CEST,M3.5.0,M10.5.0/3"},
   {"Europe/Paris", "CET-1CEST,M3.5.0,M10.5.0/3"},
@@ -149,7 +160,7 @@ static const embeddedTz_t embedded_tz_db_zones[139] = {
 /** This hash table allows for faster lookup of the timezone names. Timezones are not in alphabetical order.
  *  Timezone names are converted to lower case and then summed. The 8 bit sum is stored here.
  **/
-static const unsigned char embedded_tz_db_hashTable[139] = {
+static const unsigned char embedded_tz_db_hashTable[TZ_DB_NUM_ZONES] = {
   65,
   64,
   146,
@@ -195,6 +206,7 @@ static const unsigned char embedded_tz_db_hashTable[139] = {
   16,
   19,
   141,
+  179,
   183,
   73,
   94,
@@ -292,7 +304,7 @@ static const unsigned char embedded_tz_db_hashTable[139] = {
 };
 #else
 //Full List
-static const embeddedTz_t embedded_tz_db_zones[417] = {
+static const embeddedTz_t embedded_tz_db_zones[TZ_DB_NUM_ZONES] = {
   {"Europe/Andorra", "CET-1CEST,M3.5.0,M10.5.0/3"},
   {"Asia/Dubai", "<+04>-4"},
   {"Asia/Kabul", "<+0430>-4:30"},
@@ -407,6 +419,7 @@ static const embeddedTz_t embedded_tz_db_zones[417] = {
   {"Africa/Abidjan", "GMT0"},
   {"Pacific/Rarotonga", "<-10>10"},
   {"America/Santiago", "<-04>4<-03>,M9.1.6/24,M4.1.6/24"},
+  {"America/Coyhaique", "<-03>3"},
   {"America/Punta_Arenas", "<-03>3"},
   {"Pacific/Easter", "<-06>6<-05>,M9.1.6/22,M4.1.6/22"},
   {"Africa/Douala", "WAT-1"},
@@ -432,7 +445,7 @@ static const embeddedTz_t embedded_tz_db_zones[417] = {
   {"Pacific/Galapagos", "<-06>6"},
   {"Europe/Tallinn", "EET-2EEST,M3.5.0/3,M10.5.0/4"},
   {"Africa/Cairo", "EET-2EEST,M4.5.5/0,M10.5.4/24"},
-  {"Africa/El_Aaiun", "<+01>-1"},
+  {"Africa/El_Aaiun", "<+00>0<+01>,0/0,J365/25"},
   {"Africa/Asmara", "EAT-3"},
   {"Europe/Madrid", "CET-1CEST,M3.5.0,M10.5.0/3"},
   {"Africa/Ceuta", "CET-1CEST,M3.5.0,M10.5.0/3"},
@@ -477,7 +490,7 @@ static const embeddedTz_t embedded_tz_db_zones[417] = {
   {"Asia/Pontianak", "WIB-7"},
   {"Asia/Makassar", "WITA-8"},
   {"Asia/Jayapura", "WIT-9"},
-  {"Europe/Dublin", "IST-1GMT0,M10.5.0,M3.5.0/1"},
+  {"Europe/Dublin", "GMT0IST,M3.5.0/1,M10.5.0"},
   {"Asia/Jerusalem", "IST-2IDT,M3.4.4/26,M10.5.0"},
   {"Europe/Isle_of_Man", "GMT0BST,M3.5.0/1,M10.5.0"},
   {"Asia/Kolkata", "IST-5:30"},
@@ -520,7 +533,7 @@ static const embeddedTz_t embedded_tz_db_zones[417] = {
   {"Europe/Luxembourg", "CET-1CEST,M3.5.0,M10.5.0/3"},
   {"Europe/Riga", "EET-2EEST,M3.5.0/3,M10.5.0/4"},
   {"Africa/Tripoli", "EET-2"},
-  {"Africa/Casablanca", "<+01>-1"},
+  {"Africa/Casablanca", "<+00>0<+01>,0/0,J365/25"},
   {"Europe/Monaco", "CET-1CEST,M3.5.0,M10.5.0/3"},
   {"Europe/Chisinau", "EET-2EEST,M3.5.0,M10.5.0/3"},
   {"Europe/Podgorica", "CET-1CEST,M3.5.0,M10.5.0/3"},
@@ -590,7 +603,7 @@ static const embeddedTz_t embedded_tz_db_zones[417] = {
   {"Atlantic/Madeira", "WET0WEST,M3.5.0/1,M10.5.0"},
   {"Atlantic/Azores", "<-01>1<+00>,M3.5.0/0,M10.5.0/1"},
   {"Pacific/Palau", "<+09>-9"},
-  {"America/Asuncion", "<-04>4<-03>,M10.1.0/0,M3.4.0/0"},
+  {"America/Asuncion", "<-03>3"},
   {"Asia/Qatar", "<+03>-3"},
   {"Indian/Reunion", "<+04>-4"},
   {"Europe/Bucharest", "EET-2EEST,M3.5.0/3,M10.5.0/4"},
@@ -709,13 +722,22 @@ static const embeddedTz_t embedded_tz_db_zones[417] = {
   {"Indian/Mayotte", "EAT-3"},
   {"Africa/Johannesburg", "SAST-2"},
   {"Africa/Lusaka", "CAT-2"},
-  {"Africa/Harare", "CAT-2"}
+  {"Africa/Harare", "CAT-2"},
+  {"Etc/GMT+12", "<-12>12"},
+  {"Etc/GMT+11", "<-11>11"},
+  {"Etc/GMT+9", "<-09>9"},
+  {"Etc/GMT+8", "<-08>8"},
+  {"Etc/GMT+2", "<-02>2"},
+  {"Etc/GMT", "GMT0"},
+  {"Etc/UTC", "UTC0"},
+  {"Etc/GMT-12", "<+12>-12"},
+  {"Etc/GMT-13", "<+13>-13"}
 };
 
 /** This hash table allows for faster lookup of the timezone names. Timezones are not in alphabetical order.
  *  Timezone names are converted to lower case and then summed. The 8 bit sum is stored here.
  **/
-static const unsigned char embedded_tz_db_hashTable[417] = {
+static const unsigned char embedded_tz_db_hashTable[TZ_DB_NUM_ZONES] = {
   166,
   210,
   220,
@@ -830,6 +852,7 @@ static const unsigned char embedded_tz_db_hashTable[417] = {
   94,
   203,
   87,
+  201,
   2,
   130,
   11,
@@ -1132,7 +1155,162 @@ static const unsigned char embedded_tz_db_hashTable[417] = {
   165,
   155,
   22,
-  8
+  8,
+  65,
+  64,
+  23,
+  22,
+  16,
+  179,
+  183,
+  67,
+  68
+};
+#endif
+
+#if TZ_DB_INCLUDE_ALIAS_LIST
+/** Alias table with hash values for fast lookup */
+static const embeddedTzAlias_t embedded_tz_db_aliases[TZ_DB_NUM_ALIAS] = {
+  { "GMT", 423, 72 },
+  { "Australia/ACT", 36, 45 },
+  { "Australia/LHI", 32, 50 },
+  { "Australia/NSW", 36, 77 },
+  { "Australia/North", 41, 32 },
+  { "Australia/Queensland", 38, 37 },
+  { "Australia/South", 40, 40 },
+  { "Australia/Tasmania", 34, 67 },
+  { "Australia/Victoria", 35, 86 },
+  { "Australia/West", 42, 184 },
+  { "Australia/Yancowinna", 37, 44 },
+  { "Brazil/Acre", 76, 78 },
+  { "Brazil/DeNoronha", 61, 113 },
+  { "Brazil/East", 68, 96 },
+  { "Brazil/West", 74, 118 },
+  { "Canada/Atlantic", 83, 215 },
+  { "Canada/Central", 91, 112 },
+  { "Canada/Eastern", 88, 121 },
+  { "Canada/Mountain", 96, 242 },
+  { "Canada/Newfoundland", 82, 140 },
+  { "Canada/Pacific", 104, 86 },
+  { "Canada/Saskatchewan", 94, 132 },
+  { "Canada/Yukon", 102, 189 },
+  { "Chile/Continental", 113, 211 },
+  { "Chile/EasterIsland", 116, 51 },
+  { "Cuba", 122, 155 },
+  { "Egypt", 139, 41 },
+  { "Eire", 185, 165 },
+  { "Etc/GMT+0", 423, 14 },
+  { "Etc/GMT-0", 423, 16 },
+  { "Etc/GMT0", 423, 227 },
+  { "Etc/Greenwich", 423, 39 },
+  { "Etc/UCT", 424, 183 },
+  { "Etc/Universal", 424, 68 },
+  { "Etc/Zulu", 424, 59 },
+  { "GB", 155, 201 },
+  { "GB-Eire", 155, 155 },
+  { "GMT+0", 423, 163 },
+  { "GMT-0", 423, 165 },
+  { "GMT0", 423, 120 },
+  { "Greenwich", 423, 188 },
+  { "Hongkong", 176, 91 },
+  { "Iran", 191, 170 },
+  { "Israel", 186, 128 },
+  { "Jamaica", 195, 198 },
+  { "Japan", 197, 10 },
+  { "Kwajalein", 235, 182 },
+  { "Libya", 227, 17 },
+  { "Mexico/BajaNorte", 261, 106 },
+  { "Mexico/BajaSur", 258, 156 },
+  { "Mexico/General", 250, 146 },
+  { "NZ", 276, 232 },
+  { "NZ-CHAT", 277, 181 },
+  { "Navajo", 389, 127 },
+  { "PRC", 118, 69 },
+  { "Poland", 288, 126 },
+  { "Portugal", 294, 110 },
+  { "ROC", 366, 68 },
+  { "ROK", 207, 76 },
+  { "Singapore", 336, 200 },
+  { "Turkey", 363, 164 },
+  { "UCT", 424, 76 },
+  { "US/Alaska", 393, 132 },
+  { "US/Aleutian", 399, 106 },
+  { "US/Arizona", 391, 11 },
+  { "US/Central", 382, 0 },
+  { "US/East-Indiana", 376, 197 },
+  { "US/Eastern", 372, 9 },
+  { "US/Hawaii", 400, 138 },
+  { "US/Indiana-Starke", 384, 162 },
+  { "US/Michigan", 373, 87 },
+  { "US/Mountain", 389, 130 },
+  { "US/Pacific", 392, 230 },
+  { "US/Samoa", 30, 40 },
+  { "UTC", 424, 76 },
+  { "Universal", 424, 217 },
+  { "W-SU", 304, 140 },
+  { "Zulu", 424, 208 },
+  { "America/Buenos_Aires", 18, 0 },
+  { "America/Catamarca", 23, 158 },
+  { "America/Cordoba", 19, 219 },
+  { "America/Indianapolis", 376, 252 },
+  { "America/Jujuy", 21, 56 },
+  { "America/Knox_IN", 384, 247 },
+  { "America/Louisville", 374, 73 },
+  { "America/Mendoza", 26, 239 },
+  { "Pacific/Samoa", 30, 15 },
+  { "America/Argentina/ComodRivadavia", 23, 178 },
+  { "America/Atka", 399, 162 },
+  { "America/Ensenada", 261, 64 },
+  { "America/Fort_Wayne", 376, 63 },
+  { "America/Montreal", 88, 99 },
+  { "America/Nipigon", 88, 245 },
+  { "America/Pangnirtung", 89, 174 },
+  { "America/Porto_Acre", 76, 47 },
+  { "America/Rainy_River", 91, 171 },
+  { "America/Rosario", 19, 0 },
+  { "America/Santa_Isabel", 261, 231 },
+  { "America/Shiprock", 389, 100 },
+  { "America/Thunder_Bay", 88, 150 },
+  { "America/Yellowknife", 96, 170 },
+  { "Asia/Choibalsan", 239, 225 },
+  { "Asia/Chongqing", 118, 139 },
+  { "Asia/Harbin", 118, 65 },
+  { "Asia/Kashgar", 119, 174 },
+  { "Asia/Tel_Aviv", 186, 39 },
+  { "Australia/Canberra", 36, 51 },
+  { "Australia/Currie", 34, 127 },
+  { "Europe/Belfast", 155, 160 },
+  { "Europe/Tiraspol", 230, 45 },
+  { "Europe/Uzhgorod", 368, 49 },
+  { "Europe/Zaporozhye", 368, 26 },
+  { "Pacific/Enderbury", 202, 206 },
+  { "Pacific/Johnston", 400, 113 },
+  { "America/Godthab", 162, 218 },
+  { "Asia/Ashkhabad", 360, 100 },
+  { "Asia/Calcutta", 188, 30 },
+  { "Asia/Chungking", 118, 139 },
+  { "Asia/Dacca", 49, 185 },
+  { "Asia/Istanbul", 363, 47 },
+  { "Asia/Katmandu", 273, 34 },
+  { "Asia/Macao", 241, 206 },
+  { "Asia/Rangoon", 238, 193 },
+  { "Asia/Saigon", 409, 78 },
+  { "Asia/Thimbu", 78, 86 },
+  { "Asia/Ujung_Pandang", 183, 46 },
+  { "Asia/Ulan_Bator", 239, 244 },
+  { "Atlantic/Faeroe", 152, 241 },
+  { "Europe/Kiev", 368, 110 },
+  { "Europe/Nicosia", 126, 165 },
+  { "Africa/Asmera", 141, 14 },
+  { "Africa/Timbuktu", 237, 10 },
+  { "America/Coral_Harbour", 90, 100 },
+  { "America/Virgin", 408, 144 },
+  { "Antarctica/South_Pole", 8, 139 },
+  { "Iceland", 192, 208 },
+  { "Atlantic/Jan_Mayen", 272, 49 },
+  { "Pacific/Truk", 149, 196 },
+  { "Pacific/Yap", 149, 72 },
+  { "Pacific/Ponape", 150, 129 }
 };
 #endif
 
@@ -1183,18 +1361,35 @@ static int tz_name_cmp(const char* target, const char* other) {
 }
 
 
-const char* tz_db_get_posix_str(const char* name) {
+const embeddedTz_t* tz_db_getTimezone(const char* name) {
     unsigned char hash = createHash(name);
 
-    for (int i = 0; i < sizeof(embedded_tz_db_hashTable); i++) {
+    for (int i = 0; i < TZ_DB_NUM_ZONES; i++) {
         if (embedded_tz_db_hashTable[i] == hash) {
             // Also do string comparison to check for hash collisions. 
             if (tz_name_cmp(name, embedded_tz_db_zones[i].name) == 0) {
-                return embedded_tz_db_zones[i].rule;
+                return &embedded_tz_db_zones[i];
             }
         }
     }
-    return NULL;
+#if TZ_DB_INCLUDE_ALIAS_LIST
+    for (int i = 0; i < TZ_DB_NUM_ALIAS; i++) {
+        if (embedded_tz_db_aliases[i].hash == hash) {
+            // Also do string comparison to check for hash collisions. 
+            if (tz_name_cmp(name, embedded_tz_db_aliases[i].alias) == 0) {
+                if (embedded_tz_db_aliases[i].zoneIndex < TZ_DB_NUM_ZONES) {
+                    return &embedded_tz_db_zones[embedded_tz_db_aliases[i].zoneIndex];
+                }
+            }
+        }
+    }
+#endif
+    return NULL;          // No match found
+}
+
+const char* tz_db_get_posix_str(const char* name) {
+    const embeddedTz_t* tz = tz_db_getTimezone(name);
+    return tz ? tz->rule : NULL;
 }
 
 const char* tz_db_get_version() {
