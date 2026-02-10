@@ -47,11 +47,6 @@ const char* ntp_get_timezone(void);
 void ntp_set_server(const char* server);
 const char* ntp_get_server(void);
 
-// Apply timezone from external source (e.g., OTA check response)
-// Only applies if auto_timezone is enabled
-// tzname: IANA timezone name (e.g. "America/New_York")
-void ntp_apply_timezone(const char* tzname);
-
 #ifdef __cplusplus
 }
 #endif

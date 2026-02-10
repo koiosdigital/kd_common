@@ -11,7 +11,7 @@ typedef struct {
     unsigned char hash;       // 8-bit hash of the alias name
 } embeddedTzAlias_t;
 
-static const char* TZ_DATA_VERS = "2025b-0ubuntu0.24.04.1";
+static const char* TZ_DATA_VERS = "2025b-01";
 
 #if TZ_DB_USE_SHORT_LIST
 static const embeddedTz_t embedded_tz_db_zones[TZ_DB_NUM_ZONES] = {

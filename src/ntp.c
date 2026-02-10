@@ -7,9 +7,15 @@
 #include <esp_sntp.h>
 #include <esp_event.h>
 #include <esp_wifi.h>
+#include <esp_http_client.h>
 #include <nvs_flash.h>
 #include <nvs.h>
 #include <time.h>
+#include <stdatomic.h>
+
+#include <cJSON.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 
 #include "embedded_tz_db.h"
 
@@ -26,6 +32,16 @@ static bool s_synced = false;
 // Track if settings were modified before init (to preserve them)
 static bool s_fetch_tz_set_before_init = false;
 static bool s_auto_tz_set_before_init = false;
+
+// Timezone fetch from IP geolocation API
+#define TZ_FETCH_URL            "http://ip-api.com/json"
+#define TZ_RESPONSE_BUFFER_SIZE 512
+#define TZ_FETCH_TASK_STACK     4096
+#define TZ_FETCH_TASK_PRIORITY  5
+#define TZ_FETCH_MAX_RETRIES    2
+#define TZ_FETCH_RETRY_DELAY_MS 3000
+
+static atomic_bool s_tz_fetch_in_progress = false;
 
 // Default configuration
 static ntp_config_t s_config = {
@@ -99,6 +115,150 @@ static void apply_timezone_local(void) {
     tzset();
 }
 
+static void apply_timezone_from_name(const char* tzname) {
+    if (tzname == NULL || tzname[0] == '\0') return;
+
+    ESP_LOGI(TAG, "Applying timezone: %s", tzname);
+
+    strncpy(s_config.timezone, tzname, sizeof(s_config.timezone) - 1);
+    s_config.timezone[sizeof(s_config.timezone) - 1] = '\0';
+
+    save_config_to_nvs();
+    apply_timezone_local();
+}
+
+//------------------------------------------------------------------------------
+// Timezone fetch from IP geolocation API
+//------------------------------------------------------------------------------
+
+typedef struct {
+    char data[TZ_RESPONSE_BUFFER_SIZE];
+    size_t len;
+} tz_response_buffer_t;
+
+static void tz_response_reset(tz_response_buffer_t* buf) {
+    buf->len = 0;
+    buf->data[0] = '\0';
+}
+
+static void tz_response_append(tz_response_buffer_t* buf, const void* src, size_t src_len) {
+    size_t available = sizeof(buf->data) - buf->len - 1;
+    size_t to_copy = (available < src_len) ? available : src_len;
+    if (to_copy > 0) {
+        memcpy(buf->data + buf->len, src, to_copy);
+        buf->len += to_copy;
+        buf->data[buf->len] = '\0';
+    }
+}
+
+static esp_err_t tz_http_event_handler(esp_http_client_event_t* evt) {
+    if (!evt || !evt->user_data) return ESP_OK;
+
+    tz_response_buffer_t* buffer = (tz_response_buffer_t*)evt->user_data;
+
+    switch (evt->event_id) {
+    case HTTP_EVENT_ON_CONNECTED:
+        tz_response_reset(buffer);
+        break;
+    case HTTP_EVENT_ON_DATA:
+        if (evt->data && evt->data_len > 0) {
+            tz_response_append(buffer, evt->data, evt->data_len);
+        }
+        break;
+    default:
+        break;
+    }
+
+    return ESP_OK;
+}
+
+static bool fetch_timezone_from_api(void) {
+    tz_response_buffer_t response = {0};
+
+    esp_http_client_config_t config = {
+        .url = TZ_FETCH_URL,
+        .event_handler = tz_http_event_handler,
+        .user_data = &response,
+        .timeout_ms = 5000,
+    };
+
+    esp_http_client_handle_t client = esp_http_client_init(&config);
+    if (!client) {
+        ESP_LOGW(TAG, "Failed to init HTTP client for TZ fetch");
+        return false;
+    }
+
+    esp_err_t err = esp_http_client_perform(client);
+    int status_code = esp_http_client_get_status_code(client);
+    esp_http_client_cleanup(client);
+
+    if (err != ESP_OK || status_code != 200) {
+        ESP_LOGW(TAG, "TZ fetch failed (err=%s, status=%d)",
+                 esp_err_to_name(err), status_code);
+        return false;
+    }
+
+    cJSON* root = cJSON_Parse(response.data);
+    if (!root) {
+        ESP_LOGW(TAG, "Failed to parse TZ API response");
+        return false;
+    }
+
+    cJSON* status_item = cJSON_GetObjectItem(root, "status");
+    if (!status_item || !cJSON_IsString(status_item)
+        || strcmp(status_item->valuestring, "success") != 0) {
+        ESP_LOGW(TAG, "TZ API returned non-success status");
+        cJSON_Delete(root);
+        return false;
+    }
+
+    cJSON* tz_item = cJSON_GetObjectItem(root, "timezone");
+    if (!tz_item || !cJSON_IsString(tz_item)
+        || !tz_item->valuestring || !tz_item->valuestring[0]) {
+        ESP_LOGW(TAG, "TZ API response missing timezone field");
+        cJSON_Delete(root);
+        return false;
+    }
+
+    ESP_LOGI(TAG, "Fetched timezone from IP geolocation: %s", tz_item->valuestring);
+    apply_timezone_from_name(tz_item->valuestring);
+
+    cJSON_Delete(root);
+    return true;
+}
+
+static void tz_fetch_task(void* arg) {
+    (void)arg;
+
+    for (int attempt = 0; attempt <= TZ_FETCH_MAX_RETRIES; attempt++) {
+        if (attempt > 0) {
+            ESP_LOGI(TAG, "TZ fetch retry %d/%d", attempt, TZ_FETCH_MAX_RETRIES);
+            vTaskDelay(pdMS_TO_TICKS(TZ_FETCH_RETRY_DELAY_MS));
+        }
+
+        if (fetch_timezone_from_api()) {
+            break;
+        }
+    }
+
+    atomic_store(&s_tz_fetch_in_progress, false);
+    vTaskDelete(NULL);
+}
+
+static void spawn_tz_fetch_task(void) {
+    bool expected = false;
+    if (!atomic_compare_exchange_strong(&s_tz_fetch_in_progress, &expected, true)) {
+        ESP_LOGD(TAG, "TZ fetch already in progress");
+        return;
+    }
+
+    if (xTaskCreate(tz_fetch_task, "tz_fetch", TZ_FETCH_TASK_STACK,
+                    NULL, TZ_FETCH_TASK_PRIORITY, NULL) != pdPASS) {
+        ESP_LOGE(TAG, "Failed to create TZ fetch task");
+        atomic_store(&s_tz_fetch_in_progress, false);
+    }
+}
+
 static void time_sync_callback(struct timeval* tv) {
     s_synced = true;
 
@@ -134,9 +294,13 @@ static void wifi_event_handler(void* arg, esp_event_base_t base, int32_t id, voi
 
     if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
         // Apply cached timezone and start SNTP immediately
-        // Timezone will be updated by OTA check if auto_timezone is enabled
         apply_timezone_local();
         start_sntp();
+
+        // Fetch timezone from IP geolocation API if enabled
+        if (s_config.auto_timezone && s_config.fetch_tz_on_boot) {
+            spawn_tz_fetch_task();
+        }
     }
     else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
         s_synced = false;
@@ -208,7 +372,7 @@ void ntp_set_auto_timezone(bool enabled) {
 
     s_config.auto_timezone = enabled;
     save_config_to_nvs();
-    // Timezone will be updated on next OTA check if enabled
+    // Timezone will be fetched on next WiFi connect if enabled
 }
 
 bool ntp_get_auto_timezone(void) {
@@ -261,19 +425,3 @@ const char* ntp_get_server(void) {
     return s_config.ntp_server;
 }
 
-void ntp_apply_timezone(const char* tzname) {
-    if (tzname == NULL || tzname[0] == '\0') return;
-
-    if (!s_config.auto_timezone) {
-        ESP_LOGD(TAG, "Auto timezone disabled, ignoring external timezone");
-        return;
-    }
-
-    ESP_LOGI(TAG, "Applying timezone from OTA: %s", tzname);
-
-    strncpy(s_config.timezone, tzname, sizeof(s_config.timezone) - 1);
-    s_config.timezone[sizeof(s_config.timezone) - 1] = '\0';
-
-    save_config_to_nvs();
-    apply_timezone_local();
-}
