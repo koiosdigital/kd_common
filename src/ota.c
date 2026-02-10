@@ -15,7 +15,6 @@
 
 #include <cJSON.h>
 #include "kd_common.h"
-#include "ntp.h"
 
 #include <stdatomic.h>
 #include <string.h>
@@ -146,12 +145,6 @@ static check_result_t check_for_update(const char** out_url) {
     if (!root) {
         ESP_LOGD(TAG, "Failed to parse response");
         return CHECK_RESULT_PARSE_ERROR;
-    }
-
-    // Apply timezone from OTA response if present (merged TZ API)
-    cJSON* tz_item = cJSON_GetObjectItem(root, "tzname");
-    if (tz_item && cJSON_IsString(tz_item) && tz_item->valuestring && tz_item->valuestring[0]) {
-        ntp_apply_timezone(tz_item->valuestring);
     }
 
     cJSON* update_item = cJSON_GetObjectItem(root, "update_available");
