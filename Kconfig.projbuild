@@ -23,6 +23,14 @@ menu "KD Common Configuration"
             Enable the built-in HTTP API server for device control and
             status endpoints.
 
+    config KD_COMMON_API_HTTPD_TASK_STACK_SIZE
+        int "HTTP API task stack size"
+        depends on KD_COMMON_API_ENABLE
+        default 8192
+        help
+            Stack size for the HTTP API server task. Increase if you encounter
+            stack overflow issues.
+
     config KD_COMMON_CONSOLE_ENABLE
         bool "Enable console commands"
         default y

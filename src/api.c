@@ -4,6 +4,7 @@
 
 #include "kdmdns.h"
 #include "kd_common.h"
+#include "kdc_heap_tracing.h"
 #include "esp_http_server.h"
 #include "cJSON.h"
 #include <esp_app_desc.h>
@@ -13,6 +14,7 @@
 #include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "sdkconfig.h"
 
 static const char* TAG = "kd_api";
 
@@ -37,7 +39,7 @@ static void start_server(void) {
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.max_uri_handlers = 30;
     config.uri_match_fn = httpd_uri_match_wildcard;
-    config.stack_size = 16 * 1024;
+    config.stack_size = CONFIG_KD_COMMON_API_HTTPD_TASK_STACK_SIZE;
 
     esp_err_t ret = httpd_start(&s_kd_api_server, &config);
     if (ret != ESP_OK) {
@@ -58,14 +60,20 @@ static void start_server(void) {
     }
 }
 
-static void stop_server(void) {
+static void stop_server_internal(void) {
     if (s_kd_api_server == NULL) {
         return;
     }
 
+    kdc_heap_check_integrity("api pre httpd_stop");
     httpd_stop(s_kd_api_server);
+    kdc_heap_check_integrity("api post httpd_stop");
     s_kd_api_server = NULL;
     ESP_LOGI(TAG, "HTTP server stopped");
+}
+
+void api_stop_server(void) {
+    stop_server_internal();
 }
 
 static void wifi_event_handler(void* arg, esp_event_base_t base, int32_t id, void* event_data) {
@@ -76,7 +84,7 @@ static void wifi_event_handler(void* arg, esp_event_base_t base, int32_t id, voi
         start_server();
     }
     else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
-        stop_server();
+        stop_server_internal();
     }
 }
 
