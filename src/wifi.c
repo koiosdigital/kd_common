@@ -13,6 +13,7 @@
 
 #include "kd_common.h"
 #include "nvs_helper.h"
+#include "api.h"
 #include "network_provisioning/manager.h"
 
 #ifdef CONFIG_KD_COMMON_CONSOLE_ENABLE
@@ -30,7 +31,7 @@ typedef struct {
     bool loaded;
 } hostname_cache_t;
 
-static hostname_cache_t s_hostname_cache = {.buffer = {0}, .loaded = false};
+static hostname_cache_t s_hostname_cache = { .buffer = {0}, .loaded = false };
 
 // Global netif pointer for reuse across restarts
 static esp_netif_t* s_sta_netif = NULL;
@@ -62,6 +63,7 @@ void kd_common_wifi_disconnect(void) {
 
 void kd_common_clear_wifi_credentials(void) {
     s_pending_restart = true;
+    api_stop_server();
     network_prov_mgr_reset_wifi_provisioning();
 }
 
@@ -178,7 +180,7 @@ esp_err_t kd_common_wifi_connect(const char* ssid, const char* password) {
         return ESP_ERR_INVALID_ARG;
     }
 
-    wifi_config_t wifi_cfg = {0};
+    wifi_config_t wifi_cfg = { 0 };
     strncpy((char*)wifi_cfg.sta.ssid, ssid, sizeof(wifi_cfg.sta.ssid) - 1);
 
     if (password && strlen(password) > 0) {
