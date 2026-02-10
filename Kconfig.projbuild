@@ -38,4 +38,50 @@ menu "KD Common Configuration"
             Enable console command registration and execution via UART
             and BLE provisioning endpoints.
 
+    menu "Provisioning Configuration"
+
+        config KD_COMMON_SRP_USERNAME
+            string "SRP Username"
+            default "koiosdigital"
+            help
+                Username used for SRP authentication during BLE provisioning.
+
+        choice KD_COMMON_SRP_PASSWORD_FORMAT
+            prompt "SRP Password Format"
+            default KD_COMMON_SRP_FORMAT_NUMERIC_6
+            help
+                Select the password format for SRP authentication.
+
+            config KD_COMMON_SRP_FORMAT_STATIC
+                bool "Static password"
+                help
+                    Use a fixed password string defined in configuration.
+
+            config KD_COMMON_SRP_FORMAT_NUMERIC_6
+                bool "6-digit numeric (0-9)"
+                help
+                    Generate a random 6-digit password using digits 0-9.
+
+            config KD_COMMON_SRP_FORMAT_NUMERIC_6_REDUCED
+                bool "6-digit numeric (0-5)"
+                help
+                    Generate a random 6-digit password using digits 0-5.
+
+            config KD_COMMON_SRP_FORMAT_NUMERIC_4
+                bool "4-digit numeric (0-9)"
+                help
+                    Generate a random 4-digit password using digits 0-9.
+
+        endchoice
+
+        config KD_COMMON_SRP_STATIC_PASSWORD
+            string "Static SRP Password"
+            default "koiosdigital"
+            depends on KD_COMMON_SRP_FORMAT_STATIC
+            help
+                The static password to use for SRP authentication when
+                static password format is selected.
+
+    endmenu
+
 endmenu

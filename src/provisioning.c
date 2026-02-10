@@ -23,7 +23,6 @@ typedef struct {
     bool provisioning_started;
     bool is_wifi_connected;
     bool prov_cred_failed;
-    ProvisioningSRPPasswordFormat_t srp_format;
     char srp_password[16];
     network_prov_security2_params_t srp_params;
 } provisioning_state_t;
@@ -33,7 +32,6 @@ static provisioning_state_t s_state = {
     .provisioning_started = false,
     .is_wifi_connected = false,
     .prov_cred_failed = false,
-    .srp_format = PROVISIONING_SRP_FORMAT_STATIC,
     .srp_password = {0},
     .srp_params = {
         .salt = NULL,
@@ -67,7 +65,7 @@ static void start_provisioning_internal(void) {
     }
 
     char* srp_password = kd_common_provisioning_get_srp_password();
-    const char* username = "koiosdigital";
+    const char* username = CONFIG_KD_COMMON_SRP_USERNAME;
 
     ret = esp_srp_gen_salt_verifier(username, strlen(username),
         srp_password, strlen(srp_password),
@@ -101,7 +99,7 @@ static void start_provisioning_internal(void) {
     }
 
     s_state.provisioning_started = true;
-    ESP_LOGI(TAG, "BLE provisioning started, S2 (%s / %s)", "koiosdigital", s_state.srp_password);
+    ESP_LOGI(TAG, "BLE provisioning started, S2 (%s / %s)", CONFIG_KD_COMMON_SRP_USERNAME, s_state.srp_password);
 }
 
 static void provisioning_event_handler(void* arg, esp_event_base_t event_base,
@@ -168,53 +166,32 @@ static void provisioning_event_handler(void* arg, esp_event_base_t event_base,
 
 //MARK: Public API
 
-void kd_common_set_provisioning_srp_password_format(ProvisioningSRPPasswordFormat_t format) {
-    s_state.srp_format = format;
-}
-
 char* kd_common_provisioning_get_srp_password(void) {
     if (s_state.srp_password[0] != '\0') {
         return s_state.srp_password;
     }
 
-    // static
-    if (s_state.srp_format == PROVISIONING_SRP_FORMAT_STATIC) {
-        strcpy(s_state.srp_password, "koiosdigital");
-        return s_state.srp_password;
+#if defined(CONFIG_KD_COMMON_SRP_FORMAT_STATIC)
+    strcpy(s_state.srp_password, CONFIG_KD_COMMON_SRP_STATIC_PASSWORD);
+#elif defined(CONFIG_KD_COMMON_SRP_FORMAT_NUMERIC_6)
+    esp_fill_random(s_state.srp_password, 6);
+    for (int i = 0; i < 6; i++) {
+        s_state.srp_password[i] = (char)((s_state.srp_password[i] % 10) + '0');
     }
-
-    // 6 ascii numbers 0-9
-    if (s_state.srp_format == PROVISIONING_SRP_FORMAT_NUMERIC_6) {
-        if (s_state.srp_password[0] == '\0') {
-            esp_fill_random(s_state.srp_password, 6);
-            for (int i = 0; i < 6; i++) {
-                s_state.srp_password[i] = (char)((s_state.srp_password[i] % 10) + '0');
-            }
-        }
-        return s_state.srp_password;
+    s_state.srp_password[6] = '\0';
+#elif defined(CONFIG_KD_COMMON_SRP_FORMAT_NUMERIC_6_REDUCED)
+    esp_fill_random(s_state.srp_password, 6);
+    for (int i = 0; i < 6; i++) {
+        s_state.srp_password[i] = (char)((s_state.srp_password[i] % 6) + '0');
     }
-
-    // 6 ascii numbers 0-5
-    if (s_state.srp_format == PROVISIONING_SRP_FORMAT_NUMERIC_6_REDUCED) {
-        if (s_state.srp_password[0] == '\0') {
-            esp_fill_random(s_state.srp_password, 6);
-            for (int i = 0; i < 6; i++) {
-                s_state.srp_password[i] = (char)((s_state.srp_password[i] % 6) + '0');
-            }
-        }
-        return s_state.srp_password;
+    s_state.srp_password[6] = '\0';
+#elif defined(CONFIG_KD_COMMON_SRP_FORMAT_NUMERIC_4)
+    esp_fill_random(s_state.srp_password, 4);
+    for (int i = 0; i < 4; i++) {
+        s_state.srp_password[i] = (char)((s_state.srp_password[i] % 10) + '0');
     }
-
-    // 4 ascii numbers 0-9
-    if (s_state.srp_format == PROVISIONING_SRP_FORMAT_NUMERIC_4) {
-        if (s_state.srp_password[0] == '\0') {
-            esp_fill_random(s_state.srp_password, 4);
-            for (int i = 0; i < 4; i++) {
-                s_state.srp_password[i] = (char)((s_state.srp_password[i] % 10) + '0');
-            }
-        }
-        return s_state.srp_password;
-    }
+    s_state.srp_password[4] = '\0';
+#endif
 
     return s_state.srp_password;
 }
