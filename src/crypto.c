@@ -4,7 +4,6 @@
 
 #include "crypto_internal.h"
 #include "crypto_console.h"
-#include "kdc_heap_tracing.h"
 
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
@@ -227,6 +226,7 @@ esp_err_t kd_common_crypto_test_ds_signing(void) {
         free(ds_ctx);
         return ESP_FAIL;
     }
+    ESP_LOGI(TAG, "Public key imported to PSA");
 
     // Hash test message using PSA
     const char* test_message = "DS peripheral test message for signature verification";
@@ -242,6 +242,7 @@ esp_err_t kd_common_crypto_test_ds_signing(void) {
         free(ds_ctx);
         return ESP_FAIL;
     }
+    ESP_LOGI(TAG, "Test message hashed (SHA-256)");
 
     // Prepare PKCS#1 v1.5 padded message for DS signing
     size_t rsa_bytes = ds_ctx->rsa_length_bits / 8;
