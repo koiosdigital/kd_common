@@ -215,17 +215,6 @@ static int cmd_get_device_cert(int argc, char** argv) {
     return 0;
 }
 
-static int cmd_get_ds_params(int argc, char** argv) {
-    char* json = crypto_get_ds_params_json();
-    if (json == NULL) {
-        printf("{\"error\":true,\"message\":\"No DS params found\"}\n");
-        return 1;
-    }
-    printf("%s\n", json);
-    free(json);
-    return 0;
-}
-
 static struct {
     struct arg_int* block;
     struct arg_lit* confirm;
@@ -342,7 +331,6 @@ void crypto_console_init(void) {
     kd_console_register_cmd("set_cert_commit", "Finalize and save uploaded certificate", cmd_set_cert_commit);
 
     kd_console_register_cmd("get_device_cert", "Get device certificate (raw PEM output)", cmd_get_device_cert);
-    kd_console_register_cmd("get_ds_params", "Get digital signature parameters (ds_key_id, rsa_len, cipher_c, iv)", cmd_get_ds_params);
 
     s_set_ds_key_block_args.block = arg_int1(NULL, NULL, "<block>", "eFuse block number (4-9)");
     s_set_ds_key_block_args.confirm = arg_lit0(NULL, "confirm", NULL);

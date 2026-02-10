@@ -35,12 +35,16 @@ static provisioning_state_t s_state = {
     .prov_cred_failed = false,
     .srp_format = PROVISIONING_SRP_FORMAT_STATIC,
     .srp_password = {0},
-    .srp_params = {0}
+    .srp_params = {
+        .salt = NULL,
+        .salt_len = SALT_LEN,
+        .verifier = NULL,
+        .verifier_len = 0,
+    }
 };
 
 static void start_provisioning_internal(void) {
     if (s_state.provisioning_started) {
-        ESP_LOGD(TAG, "Provisioning already started");
         return;
     }
 
@@ -52,7 +56,7 @@ static void start_provisioning_internal(void) {
             .user_data = NULL,
         },
         .network_prov_wifi_conn_cfg = {
-            .wifi_conn_attempts = 3,
+            .wifi_conn_attempts = 2,
         },
     };
 
@@ -62,55 +66,39 @@ static void start_provisioning_internal(void) {
         return;
     }
 
-#ifdef CONFIG_KD_COMMON_CONSOLE_ENABLE
+    char* srp_password = kd_common_provisioning_get_srp_password();
+    const char* username = "koiosdigital";
+
+    ret = esp_srp_gen_salt_verifier(username, strlen(username),
+        srp_password, strlen(srp_password),
+        (char**)&s_state.srp_params.salt, SALT_LEN,
+        (char**)&s_state.srp_params.verifier, (int*)&s_state.srp_params.verifier_len);
+    if (ret != ESP_OK || !s_state.srp_params.salt || !s_state.srp_params.verifier) {
+        ESP_LOGE(TAG, "Failed to generate SRP salt/verifier: %s", esp_err_to_name(ret));
+        network_prov_mgr_deinit();
+        return;
+    }
+
     ret = network_prov_mgr_endpoint_create(BLE_CONSOLE_ENDPOINT_NAME);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to create endpoint: %s", esp_err_to_name(ret));
         network_prov_mgr_deinit();
         return;
     }
-#endif
-
-    char* srp_password = kd_common_provisioning_get_srp_password();
-
-    const char* username = "koiosdigital";
-    char* salt_out = NULL;
-    char* verifier_out = NULL;
-    int verifier_len = 0;
-
-    ret = esp_srp_gen_salt_verifier(username, strlen(username),
-        srp_password, strlen(srp_password),
-        &salt_out, SALT_LEN,
-        &verifier_out, &verifier_len);
-    if (ret != ESP_OK || !salt_out || !verifier_out) {
-        ESP_LOGE(TAG, "Failed to generate SRP salt/verifier: %s", esp_err_to_name(ret));
-        free(salt_out);
-        free(verifier_out);
-        network_prov_mgr_deinit();
-        return;
-    }
-
-    s_state.srp_params.salt = salt_out;
-    s_state.srp_params.salt_len = SALT_LEN;
-    s_state.srp_params.verifier = verifier_out;
-    s_state.srp_params.verifier_len = verifier_len;
 
     ret = network_prov_mgr_start_provisioning(NETWORK_PROV_SECURITY_2, &s_state.srp_params, kd_common_get_device_name(), NULL);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to start prov: %s", esp_err_to_name(ret));
-        free((void*)s_state.srp_params.salt);
-        free((void*)s_state.srp_params.verifier);
-        memset(&s_state.srp_params, 0, sizeof(s_state.srp_params));
         network_prov_mgr_deinit();
         return;
     }
 
-#ifdef CONFIG_KD_COMMON_CONSOLE_ENABLE
     ret = network_prov_mgr_endpoint_register(BLE_CONSOLE_ENDPOINT_NAME, ble_console_endpoint, NULL);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to register endpoint: %s", esp_err_to_name(ret));
+        network_prov_mgr_deinit();
+        return;
     }
-#endif
 
     s_state.provisioning_started = true;
     ESP_LOGI(TAG, "BLE provisioning started, S2 (%s / %s)", "koiosdigital", s_state.srp_password);
@@ -121,32 +109,30 @@ static void provisioning_event_handler(void* arg, esp_event_base_t event_base,
     (void)arg;
     (void)event_data;
 
-    // Check for WiFi start to potentially restart provisioning after credential clear
-    if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
-        bool provisioned = false;
-        network_prov_mgr_is_wifi_provisioned(&provisioned);
-        if (!provisioned && !s_state.provisioning_started) {
-            // Reset SRP password so a new one is generated
-            s_state.srp_password[0] = '\0';
-            ESP_LOGI(TAG, "WiFi started but not provisioned - starting BLE");
-            start_provisioning_internal();
+    if (event_base == WIFI_EVENT) {
+        if (event_id == WIFI_EVENT_STA_START) {
+            bool provisioned = false;
+            network_prov_mgr_is_wifi_provisioned(&provisioned);
+            if (!provisioned && !s_state.provisioning_started) {
+                s_state.srp_password[0] = '\0';
+                ESP_LOGI(TAG, "WiFi started but not provisioned - starting BLE");
+                start_provisioning_internal();
+            }
+            return;
         }
-        return;
-    }
-
-    if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
-        s_state.is_wifi_connected = false;
-        // Reconnect unless waiting for new provisioning credentials
-        if (!s_state.prov_cred_failed) {
-            vTaskDelay(pdMS_TO_TICKS(2500));
-            esp_wifi_connect();
+        else if (event_id == WIFI_EVENT_STA_DISCONNECTED) {
+            s_state.is_wifi_connected = false;
+            // Reconnect unless waiting for new provisioning credentials
+            if (!s_state.prov_cred_failed) {
+                vTaskDelay(pdMS_TO_TICKS(2500));
+                esp_wifi_connect();
+            }
         }
     }
     else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         s_state.ever_connected = true;
         s_state.is_wifi_connected = true;
         s_state.prov_cred_failed = false;
-        // Provisioning will auto-stop via WIFI_PROV_END event
     }
     else if (event_base == NETWORK_PROV_EVENT) {
         switch (event_id) {
@@ -167,8 +153,13 @@ static void provisioning_event_handler(void* arg, esp_event_base_t event_base,
             s_state.provisioning_started = false;
             break;
         case NETWORK_PROV_DEINIT:
-            free((void*)s_state.srp_params.salt);
-            free((void*)s_state.srp_params.verifier);
+            if (s_state.srp_params.salt != NULL) {
+                free((void*)s_state.srp_params.salt);
+            }
+            if (s_state.srp_params.verifier != NULL) {
+                free((void*)s_state.srp_params.verifier);
+            }
+
             memset(&s_state.srp_params, 0, sizeof(s_state.srp_params));
             break;
         }

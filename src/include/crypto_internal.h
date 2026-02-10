@@ -24,6 +24,8 @@ extern "C" {
 #define CRYPTO_NVS_KEY_CLAIM_TOKEN "claim_token"
 #define CRYPTO_NVS_KEY_DS_KEY_BLOCK "ds_key_blk"
 
+#define CRYPTO_MAX_CLAIM_TOKEN_SIZE 256
+
 #define CRYPTO_KEY_SIZE 4096
 #define CRYPTO_PEM_BUFFER_SIZE 12288  // 12KB for fullchain (leaf + intermediates)
 
@@ -43,7 +45,12 @@ esp_err_t crypto_storage_clear_device_cert(void);
 esp_err_t crypto_storage_get_claim_token(char* buffer, size_t* len);
 esp_err_t crypto_storage_set_claim_token(const char* buffer, size_t len);
 esp_err_t crypto_storage_clear_claim_token(void);
-esp_err_t crypto_storage_store_ds_params(const uint8_t* c, const uint8_t* iv, uint8_t key_id, uint16_t rsa_length);
+esp_err_t crypto_storage_store_ds_params(uint32_t key_block_id, uint32_t rsa_len,
+                                         const uint8_t* cipher_c, size_t cipher_c_len,
+                                         const uint8_t* iv, size_t iv_len);
+esp_err_t crypto_storage_get_ds_params(uint32_t* key_block_id, uint32_t* rsa_len,
+                                       uint8_t* cipher_c, size_t* cipher_c_len,
+                                       uint8_t* iv, size_t* iv_len);
 esp_ds_data_ctx_t* crypto_storage_get_ds_ctx(void);
 
 // Internal functions - crypto_keygen.c

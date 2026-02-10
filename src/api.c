@@ -4,7 +4,6 @@
 
 #include "kdmdns.h"
 #include "kd_common.h"
-#include "kdc_heap_tracing.h"
 #include "esp_http_server.h"
 #include "cJSON.h"
 #include <esp_app_desc.h>
@@ -65,9 +64,7 @@ static void stop_server_internal(void) {
         return;
     }
 
-    kdc_heap_check_integrity("api pre httpd_stop");
     httpd_stop(s_kd_api_server);
-    kdc_heap_check_integrity("api post httpd_stop");
     s_kd_api_server = NULL;
     ESP_LOGI(TAG, "HTTP server stopped");
 }

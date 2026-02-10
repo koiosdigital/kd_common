@@ -8,9 +8,6 @@
 #include <esp_log.h>
 #include <esp_ds.h>
 
-#include "mbedtls/base64.h"
-#include "cJSON.h"
-
 #include <string.h>
 #include <stdlib.h>
 
@@ -180,6 +177,11 @@ esp_err_t crypto_storage_get_claim_token(char* buffer, size_t* len) {
 }
 
 esp_err_t crypto_storage_set_claim_token(const char* buffer, size_t len) {
+    if (len > CRYPTO_MAX_CLAIM_TOKEN_SIZE) {
+        ESP_LOGE(TAG, "claim token too large: %zu > %d", len, CRYPTO_MAX_CLAIM_TOKEN_SIZE);
+        return ESP_ERR_INVALID_SIZE;
+    }
+
     nvs_helper_t nvs = nvs_helper_open(CRYPTO_NVS_NAMESPACE, NVS_READWRITE);
     if (!nvs.valid) {
         ESP_LOGE(TAG, "nvs open failed: %s", esp_err_to_name(nvs.open_err));
@@ -229,14 +231,25 @@ esp_err_t crypto_storage_clear_claim_token(void) {
 
 //MARK: DS Parameters Operations
 
-esp_err_t crypto_storage_store_ds_params(const uint8_t* c, const uint8_t* iv, uint8_t key_id, uint16_t rsa_length) {
+esp_err_t crypto_storage_store_ds_params(uint32_t key_block_id, uint32_t rsa_len,
+                                         const uint8_t* cipher_c, size_t cipher_c_len,
+                                         const uint8_t* iv, size_t iv_len) {
+    if (cipher_c_len != ESP_DS_C_LEN) {
+        ESP_LOGE(TAG, "invalid cipher_c length: %zu (expected %d)", cipher_c_len, ESP_DS_C_LEN);
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (iv_len != ESP_DS_IV_LEN) {
+        ESP_LOGE(TAG, "invalid iv length: %zu (expected %d)", iv_len, ESP_DS_IV_LEN);
+        return ESP_ERR_INVALID_ARG;
+    }
+
     nvs_helper_t nvs = nvs_helper_open(CRYPTO_NVS_NAMESPACE, NVS_READWRITE);
     if (!nvs.valid) {
         ESP_LOGE(TAG, "nvs open failed: %s", esp_err_to_name(nvs.open_err));
         return nvs.open_err;
     }
 
-    esp_err_t err = nvs_helper_set_blob(&nvs, CRYPTO_NVS_KEY_CIPHERTEXT, c, ESP_DS_C_LEN);
+    esp_err_t err = nvs_helper_set_blob(&nvs, CRYPTO_NVS_KEY_CIPHERTEXT, cipher_c, ESP_DS_C_LEN);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "nvs set ciphertext failed: %s", esp_err_to_name(err));
         nvs_helper_close(&nvs);
@@ -250,14 +263,14 @@ esp_err_t crypto_storage_store_ds_params(const uint8_t* c, const uint8_t* iv, ui
         return err;
     }
 
-    err = nvs_helper_set_u8(&nvs, CRYPTO_NVS_KEY_DS_KEY_ID, key_id);
+    err = nvs_helper_set_u8(&nvs, CRYPTO_NVS_KEY_DS_KEY_ID, (uint8_t)key_block_id);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "nvs set ds key id failed: %s", esp_err_to_name(err));
         nvs_helper_close(&nvs);
         return err;
     }
 
-    err = nvs_helper_set_u16(&nvs, CRYPTO_NVS_KEY_RSA_LEN, rsa_length);
+    err = nvs_helper_set_u16(&nvs, CRYPTO_NVS_KEY_RSA_LEN, (uint16_t)rsa_len);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "nvs set rsa length failed: %s", esp_err_to_name(err));
         nvs_helper_close(&nvs);
@@ -343,111 +356,69 @@ esp_ds_data_ctx_t* crypto_storage_get_ds_ctx(void) {
     return ds_data_ctx;
 }
 
-//MARK: JSON DS Params (Public API wrappers)
-
-char* crypto_get_ds_params_json(void) {
-    esp_ds_data_ctx_t* ds_data_ctx = crypto_storage_get_ds_ctx();
-    if (ds_data_ctx == NULL) {
-        printf("{\"error_message\":\"no ds params\",\"error\":true}\n");
-        return NULL;
+esp_err_t crypto_storage_get_ds_params(uint32_t* key_block_id, uint32_t* rsa_len,
+                                       uint8_t* cipher_c, size_t* cipher_c_len,
+                                       uint8_t* iv, size_t* iv_len) {
+    nvs_helper_t nvs = nvs_helper_open(CRYPTO_NVS_NAMESPACE, NVS_READONLY);
+    if (!nvs.valid) {
+        ESP_LOGE(TAG, "nvs open failed: %s", esp_err_to_name(nvs.open_err));
+        return nvs.open_err;
     }
 
-    cJSON* json = cJSON_CreateObject();
-
-    cJSON_AddNumberToObject(json, "ds_key_id", ds_data_ctx->efuse_key_id + 4);
-    cJSON_AddNumberToObject(json, "rsa_len", ds_data_ctx->esp_ds_data->rsa_length);
-
-    // Get required base64 size for cipher_c
-    size_t base64_c_len = 0;
-    mbedtls_base64_encode(NULL, 0, &base64_c_len,
-        (unsigned char*)ds_data_ctx->esp_ds_data->c, ESP_DS_C_LEN);
-    char* base64_c = (char*)malloc(base64_c_len + 1);
-    mbedtls_base64_encode((unsigned char*)base64_c, base64_c_len + 1, &base64_c_len,
-        (unsigned char*)ds_data_ctx->esp_ds_data->c, ESP_DS_C_LEN);
-    cJSON_AddStringToObject(json, "cipher_c", base64_c);
-    free(base64_c);
-
-    // Get required base64 size for iv
-    size_t base64_iv_len = 0;
-    mbedtls_base64_encode(NULL, 0, &base64_iv_len,
-        (unsigned char*)ds_data_ctx->esp_ds_data->iv, ESP_DS_IV_LEN);
-    char* base64_iv = (char*)malloc(base64_iv_len + 1);
-    mbedtls_base64_encode((unsigned char*)base64_iv, base64_iv_len + 1, &base64_iv_len,
-        (unsigned char*)ds_data_ctx->esp_ds_data->iv, ESP_DS_IV_LEN);
-    cJSON_AddStringToObject(json, "iv", base64_iv);
-    free(base64_iv);
-
-    free(ds_data_ctx->esp_ds_data);
-    free(ds_data_ctx);
-
-    char* json_string = cJSON_PrintUnformatted(json);
-    cJSON_Delete(json);
-    return json_string;
-}
-
-esp_err_t crypto_store_ds_params_json(char* params) {
-    cJSON* ds_params = cJSON_Parse(params);
-
-    if (ds_params == NULL) {
-        free(params);
-        return ESP_ERR_INVALID_ARG;
+    // Get key_block_id
+    uint8_t key_id = 0;
+    esp_err_t err = nvs_helper_get_u8(&nvs, CRYPTO_NVS_KEY_DS_KEY_ID, &key_id);
+    if (err != ESP_OK) {
+        ESP_LOGD(TAG, "failed to get ds key id: %s", esp_err_to_name(err));
+        nvs_helper_close(&nvs);
+        return err;
+    }
+    if (key_block_id != NULL) {
+        *key_block_id = (uint32_t)key_id;
     }
 
-    if (cJSON_GetObjectItem(ds_params, "ds_key_id") == NULL ||
-        cJSON_GetObjectItem(ds_params, "rsa_len") == NULL ||
-        cJSON_GetObjectItem(ds_params, "cipher_c") == NULL ||
-        cJSON_GetObjectItem(ds_params, "iv") == NULL) {
-        ESP_LOGE(TAG, "missing required ds params fields");
-        free(params);
-        cJSON_Delete(ds_params);
-        return ESP_ERR_INVALID_ARG;
+    // Get rsa_len
+    uint16_t rsa_length = 0;
+    err = nvs_helper_get_u16(&nvs, CRYPTO_NVS_KEY_RSA_LEN, &rsa_length);
+    if (err != ESP_OK) {
+        ESP_LOGD(TAG, "failed to get rsa length: %s", esp_err_to_name(err));
+        nvs_helper_close(&nvs);
+        return err;
+    }
+    if (rsa_len != NULL) {
+        *rsa_len = (uint32_t)rsa_length;
     }
 
-    uint8_t ds_key_id = (uint8_t)cJSON_GetObjectItem(ds_params, "ds_key_id")->valueint;
-    uint16_t rsa_length = (uint16_t)cJSON_GetObjectItem(ds_params, "rsa_len")->valueint;
-
-    char* base64_c = cJSON_GetObjectItem(ds_params, "cipher_c")->valuestring;
-    char* base64_iv = cJSON_GetObjectItem(ds_params, "iv")->valuestring;
-
-    size_t c_len = strlen(base64_c);
-    size_t iv_len = strlen(base64_iv);
-
-    uint8_t* c = (uint8_t*)malloc(ESP_DS_C_LEN);
-    uint8_t* iv = (uint8_t*)malloc(ESP_DS_IV_LEN);
-
-    if (c == NULL || iv == NULL) {
-        free(c);
-        free(iv);
-        cJSON_Delete(ds_params);
-        free(params);
-        return ESP_ERR_NO_MEM;
+    // Get cipher_c
+    if (cipher_c != NULL && cipher_c_len != NULL) {
+        size_t len = *cipher_c_len;
+        err = nvs_helper_get_blob(&nvs, CRYPTO_NVS_KEY_CIPHERTEXT, cipher_c, &len);
+        if (err != ESP_OK) {
+            ESP_LOGD(TAG, "failed to get ciphertext: %s", esp_err_to_name(err));
+            nvs_helper_close(&nvs);
+            return err;
+        }
+        *cipher_c_len = len;
+    } else if (cipher_c_len != NULL) {
+        *cipher_c_len = ESP_DS_C_LEN;
     }
 
-    size_t decoded_c_len = 0;
-    size_t decoded_iv_len = 0;
-
-    mbedtls_base64_decode(c, ESP_DS_C_LEN, &decoded_c_len,
-        (unsigned char*)base64_c, c_len);
-    mbedtls_base64_decode(iv, ESP_DS_IV_LEN, &decoded_iv_len,
-        (unsigned char*)base64_iv, iv_len);
-
-    if (decoded_c_len != ESP_DS_C_LEN || decoded_iv_len != ESP_DS_IV_LEN) {
-        ESP_LOGE(TAG, "decoded length mismatch: c=%zu (expected %d), iv=%zu (expected %d)",
-            decoded_c_len, ESP_DS_C_LEN, decoded_iv_len, ESP_DS_IV_LEN);
-        free(c);
-        free(iv);
-        cJSON_Delete(ds_params);
-        free(params);
-        return ESP_ERR_INVALID_ARG;
+    // Get iv
+    if (iv != NULL && iv_len != NULL) {
+        size_t len = *iv_len;
+        err = nvs_helper_get_blob(&nvs, CRYPTO_NVS_KEY_IV, iv, &len);
+        if (err != ESP_OK) {
+            ESP_LOGD(TAG, "failed to get iv: %s", esp_err_to_name(err));
+            nvs_helper_close(&nvs);
+            return err;
+        }
+        *iv_len = len;
+    } else if (iv_len != NULL) {
+        *iv_len = ESP_DS_IV_LEN;
     }
 
-    esp_err_t err = crypto_storage_store_ds_params(c, iv, ds_key_id, rsa_length);
-
-    free(c);
-    free(iv);
-    cJSON_Delete(ds_params);
-    free(params);
-    return err;
+    nvs_helper_close(&nvs);
+    return ESP_OK;
 }
 
 //MARK: DS Key Block Configuration

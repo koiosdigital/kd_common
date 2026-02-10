@@ -18,6 +18,8 @@ typedef struct esp_ds_data_ctx {
     uint16_t rsa_length_bits;
 } esp_ds_data_ctx_t;
 
+#define KD_CRYPTO_MAX_CLAIM_TOKEN_SIZE 256
+
 typedef enum CryptoState_t {
     CRYPTO_STATE_UNINITIALIZED,
     CRYPTO_STATE_KEY_GENERATED,

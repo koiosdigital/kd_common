@@ -36,7 +36,9 @@ void kd_common_init(void) {
 #endif
 
     wifi_init();
+
     provisioning_init();
+
     ntp_init();
 
 #ifdef ENABLE_OTA

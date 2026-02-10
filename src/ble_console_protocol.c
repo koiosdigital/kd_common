@@ -7,29 +7,55 @@
 
 static const char* TAG = "ble_proto";
 
-// BLE protocol state
+// Protocol state machine
+typedef enum {
+    BLE_STATE_IDLE = 0,        // Ready for new request
+    BLE_STATE_RECEIVING,       // Assembling multi-chunk request
+    BLE_STATE_TRANSMITTING     // Sending multi-chunk response
+} ble_state_t;
+
+// BLE protocol context
 typedef struct {
     // Shared buffer for input reassembly and output chunking
     uint8_t* buffer;
 
-    // Input state
+    // Protocol state
+    ble_state_t state;
+
+    // Input state (valid in RECEIVING)
     size_t in_total_len;
     size_t in_received;
     uint8_t in_next_chunk_idx;
 
-    // Output state
+    // Output state (valid in TRANSMITTING)
     size_t out_len;
     uint8_t out_next_chunk_idx;
-    bool out_has_response;
+    uint8_t out_total_chunks;
 
     // Last sent frame for retransmission
     uint8_t* last_frame;
     size_t last_frame_len;
 
     bool initialized;
-} ble_protocol_state_t;
+} ble_protocol_ctx_t;
 
-static ble_protocol_state_t s_proto = {0};
+static ble_protocol_ctx_t s_proto = { 0 };
+
+static const char* state_name(ble_state_t state) {
+    switch (state) {
+        case BLE_STATE_IDLE: return "IDLE";
+        case BLE_STATE_RECEIVING: return "RECEIVING";
+        case BLE_STATE_TRANSMITTING: return "TRANSMITTING";
+        default: return "UNKNOWN";
+    }
+}
+
+static void set_state(ble_state_t new_state) {
+    if (s_proto.state != new_state) {
+        ESP_LOGD(TAG, "state: %s -> %s", state_name(s_proto.state), state_name(new_state));
+        s_proto.state = new_state;
+    }
+}
 
 static bool proto_init(void) {
     if (s_proto.initialized) return true;
@@ -46,8 +72,9 @@ static bool proto_init(void) {
 }
 
 static void reset_input(void) {
-    if (s_proto.buffer) {
-        memset(s_proto.buffer, 0, BLE_CONSOLE_MAX_PAYLOAD);
+    // Only clear buffer if NOT transmitting (protect output data)
+    if (s_proto.state != BLE_STATE_TRANSMITTING && s_proto.buffer && s_proto.in_received > 0) {
+        memset(s_proto.buffer, 0, s_proto.in_received);
     }
     s_proto.in_total_len = 0;
     s_proto.in_received = 0;
@@ -57,7 +84,7 @@ static void reset_input(void) {
 static void reset_output(void) {
     s_proto.out_len = 0;
     s_proto.out_next_chunk_idx = 0;
-    s_proto.out_has_response = false;
+    s_proto.out_total_chunks = 0;
     free(s_proto.last_frame);
     s_proto.last_frame = NULL;
     s_proto.last_frame_len = 0;
@@ -69,7 +96,8 @@ static void store_last_frame(const uint8_t* frame, size_t len) {
     if (s_proto.last_frame) {
         memcpy(s_proto.last_frame, frame, len);
         s_proto.last_frame_len = len;
-    } else {
+    }
+    else {
         s_proto.last_frame_len = 0;
     }
 }
@@ -113,7 +141,14 @@ void ble_protocol_reset_output(void) {
 void ble_protocol_reset_all(void) {
     ESP_LOGD(TAG, "reset all");
     ensure_initialized();
-    reset_input();
+    set_state(BLE_STATE_IDLE);
+    // Clear full buffer on explicit reset
+    if (s_proto.buffer) {
+        memset(s_proto.buffer, 0, BLE_CONSOLE_MAX_PAYLOAD);
+    }
+    s_proto.in_total_len = 0;
+    s_proto.in_received = 0;
+    s_proto.in_next_chunk_idx = 0;
     reset_output();
 }
 
@@ -160,7 +195,13 @@ ble_receive_result_t ble_protocol_receive_chunk(const uint8_t* frame, size_t fra
 
     // First chunk initializes reassembly
     if (chunk_idx == 0) {
+        // Check if transmission is active - reject new requests
+        if (s_proto.state == BLE_STATE_TRANSMITTING) {
+            ESP_LOGW(TAG, "Busy - transmission in progress");
+            return BLE_RECEIVE_BUSY;
+        }
         reset_input();
+        set_state(BLE_STATE_RECEIVING);
         s_proto.in_total_len = total_len;
         s_proto.in_next_chunk_idx = 0;
     }
@@ -223,12 +264,14 @@ void ble_protocol_set_output(const uint8_t* data, size_t len) {
     memmove(s_proto.buffer, data, len);
     s_proto.out_len = len;
     s_proto.out_next_chunk_idx = 0;
-    s_proto.out_has_response = true;
-    ESP_LOGD(TAG, "output set: %u bytes", (unsigned)len);
+    s_proto.out_total_chunks = (uint8_t)((len + BLE_CONSOLE_CHUNK_PAYLOAD_SIZE - 1) / BLE_CONSOLE_CHUNK_PAYLOAD_SIZE);
+    set_state(BLE_STATE_TRANSMITTING);
+    ESP_LOGI(TAG, "output set: %u bytes, %u chunks", (unsigned)len, s_proto.out_total_chunks);
+    ESP_LOG_BUFFER_HEXDUMP(TAG, s_proto.buffer, s_proto.out_len, ESP_LOG_INFO);
 }
 
 bool ble_protocol_has_output(void) {
-    return s_proto.out_has_response && s_proto.out_len > 0;
+    return s_proto.state == BLE_STATE_TRANSMITTING;
 }
 
 uint8_t* ble_protocol_build_next_chunk(size_t* out_frame_len) {
@@ -238,14 +281,14 @@ uint8_t* ble_protocol_build_next_chunk(size_t* out_frame_len) {
 
     *out_frame_len = 0;
 
-    if (!s_proto.out_has_response || s_proto.out_len == 0) {
+    if (s_proto.state != BLE_STATE_TRANSMITTING || s_proto.out_len == 0) {
         return NULL;
     }
 
     size_t offset = (size_t)s_proto.out_next_chunk_idx * BLE_CONSOLE_CHUNK_PAYLOAD_SIZE;
     if (offset >= s_proto.out_len) {
         // All chunks sent
-        s_proto.out_has_response = false;
+        set_state(BLE_STATE_IDLE);
         return NULL;
     }
 
@@ -282,14 +325,13 @@ uint8_t* ble_protocol_build_next_chunk(size_t* out_frame_len) {
     s_proto.out_next_chunk_idx++;
 
     // Check if this was the last chunk
-    size_t next_offset = (size_t)s_proto.out_next_chunk_idx * BLE_CONSOLE_CHUNK_PAYLOAD_SIZE;
-    if (next_offset >= s_proto.out_len) {
+    if (s_proto.out_next_chunk_idx >= s_proto.out_total_chunks) {
         ESP_LOGD(TAG, "last chunk built");
-        s_proto.out_has_response = false;
+        set_state(BLE_STATE_IDLE);
     }
 
-    ESP_LOGD(TAG, "built chunk %u: %u bytes, crc=0x%04X",
-        s_proto.out_next_chunk_idx - 1, (unsigned)frame_size, crc);
+    ESP_LOGD(TAG, "built chunk %u/%u: %u bytes, crc=0x%04X",
+        s_proto.out_next_chunk_idx, s_proto.out_total_chunks, (unsigned)frame_size, crc);
     return frame;
 }
 

@@ -274,7 +274,8 @@ static void crypto_setup_task(void* pvParameter) {
     }
 
     esp_ds_encrypt_params(encrypted, iv, ds_params, hmac);
-    crypto_storage_store_ds_params(encrypted->c, iv, params->ds_key_block, (CRYPTO_KEY_SIZE / 32) - 1);
+    crypto_storage_store_ds_params(params->ds_key_block, (CRYPTO_KEY_SIZE / 32) - 1,
+                                   encrypted->c, ESP_DS_C_LEN, iv, ESP_DS_IV_LEN);
 
     heap_caps_free(encrypted);
     free(ds_params);

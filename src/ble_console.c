@@ -1,7 +1,5 @@
 #include "ble_console.h"
 
-#ifdef CONFIG_KD_COMMON_CONSOLE_ENABLE
-
 #include <string.h>
 #include <stdlib.h>
 
@@ -14,11 +12,11 @@
 #include "kd_common.h"
 #ifdef CONFIG_KD_COMMON_CRYPTO_ENABLE
 #include "crypto.h"
+#include <esp_ds.h>
 #endif
 #include "ble_console_protocol.h"
 
 static const char* TAG = "ble_console";
-
 
 #ifdef CONFIG_KD_COMMON_CRYPTO_ENABLE
 static uint8_t s_crypto_retry_count = 0;
@@ -77,6 +75,8 @@ static void prepare_response(Kd__V1__ConsoleMessage* resp) {
     }
 
     kd__v1__console_message__pack(resp, out_buffer);
+
+    ESP_LOG_BUFFER_HEXDUMP(TAG, out_buffer, payload_len, ESP_LOG_INFO);
     ble_protocol_set_output(out_buffer, payload_len);
     free(out_buffer);
     ESP_LOGI(TAG, "response ready: %u bytes", (unsigned)payload_len);
@@ -223,8 +223,19 @@ static void handle_request(const Kd__V1__ConsoleMessage* req) {
         result.error_code = 0;
         result.detail = (char*)"no ds params";
 
-        char* json = crypto_get_ds_params_json();
-        if (json != NULL) {
+        uint32_t key_block_id = 0;
+        uint32_t rsa_len = 0;
+        size_t cipher_c_len = ESP_DS_C_LEN;
+        size_t iv_len = ESP_DS_IV_LEN;
+        uint8_t* cipher_c = (uint8_t*)malloc(ESP_DS_C_LEN);
+        uint8_t* iv = (uint8_t*)malloc(ESP_DS_IV_LEN);
+
+        esp_err_t err = ESP_ERR_NO_MEM;
+        if (cipher_c != NULL && iv != NULL) {
+            err = crypto_get_ds_params(&key_block_id, &rsa_len, cipher_c, &cipher_c_len, iv, &iv_len);
+        }
+
+        if (err == ESP_OK) {
             result.success = true;
             result.detail = (char*)"ok";
             s_crypto_retry_count = 0;
@@ -244,16 +255,22 @@ static void handle_request(const Kd__V1__ConsoleMessage* req) {
 
         Kd__V1__GetDsParamsResponse ds_resp = KD__V1__GET_DS_PARAMS_RESPONSE__INIT;
         ds_resp.result = &result;
-        ds_resp.ds_params_json = json ? json : (char*)"";
+        if (err == ESP_OK) {
+            ds_resp.key_block_id = key_block_id;
+            ds_resp.rsa_len = rsa_len;
+            ds_resp.cipher_c.data = cipher_c;
+            ds_resp.cipher_c.len = cipher_c_len;
+            ds_resp.iv.data = iv;
+            ds_resp.iv.len = iv_len;
+        }
 
         Kd__V1__ConsoleMessage resp = KD__V1__CONSOLE_MESSAGE__INIT;
         resp.payload_case = KD__V1__CONSOLE_MESSAGE__PAYLOAD_GET_DS_PARAMS_RESPONSE;
         resp.get_ds_params_response = &ds_resp;
         prepare_response(&resp);
 
-        if (json) {
-            free(json);
-        }
+        free(cipher_c);
+        free(iv);
         break;
     }
 
@@ -264,22 +281,21 @@ static void handle_request(const Kd__V1__ConsoleMessage* req) {
         result.detail = (char*)"invalid";
 
         const Kd__V1__SetDsParamsRequest* set_req = req->set_ds_params_request;
-        if (set_req && set_req->ds_params_json != NULL && strlen(set_req->ds_params_json) > 0) {
-            char* params_copy = strdup(set_req->ds_params_json);
-            if (params_copy == NULL) {
-                result.error_code = ESP_ERR_NO_MEM;
-                result.detail = (char*)"no mem";
+        if (set_req && set_req->cipher_c.data != NULL && set_req->iv.data != NULL) {
+            esp_err_t err = crypto_store_ds_params(
+                set_req->key_block_id,
+                set_req->rsa_len,
+                set_req->cipher_c.data,
+                set_req->cipher_c.len,
+                set_req->iv.data,
+                set_req->iv.len);
+            if (err == ESP_OK) {
+                result.success = true;
+                result.detail = (char*)"ok";
             }
             else {
-                esp_err_t err = crypto_store_ds_params_json(params_copy);
-                if (err == ESP_OK) {
-                    result.success = true;
-                    result.detail = (char*)"ok";
-                }
-                else {
-                    result.error_code = err;
-                    result.detail = (char*)"failed";
-                }
+                result.error_code = err;
+                result.detail = (char*)"failed";
             }
         }
 
@@ -413,6 +429,13 @@ esp_err_t ble_console_endpoint(uint32_t session_id, const uint8_t* inbuf, ssize_
             return ESP_OK;
         }
 
+        if (result == BLE_RECEIVE_BUSY) {
+            // Transmission in progress - tell client to retry
+            ESP_LOGW(TAG, "Busy - sending retry response");
+            *outbuf = ble_protocol_build_single_response(BLE_RSP_BUSY, (size_t*)outlen);
+            return ESP_OK;
+        }
+
         if (result == BLE_RECEIVE_COMPLETE) {
             ESP_LOGI(TAG, "request complete, processing...");
 
@@ -424,7 +447,6 @@ esp_err_t ble_console_endpoint(uint32_t session_id, const uint8_t* inbuf, ssize_
             if (req != NULL) {
                 kd__v1__console_message__free_unpacked(req, NULL);
             }
-            ble_protocol_reset_input();
 
             // Send first response chunk
             if (ble_protocol_has_output()) {
@@ -443,5 +465,3 @@ esp_err_t ble_console_endpoint(uint32_t session_id, const uint8_t* inbuf, ssize_
     ESP_LOGW(TAG, "unknown frame type: 0x%02X", inbuf[0]);
     return ESP_OK;
 }
-
-#endif // CONFIG_KD_COMMON_CONSOLE_ENABLE

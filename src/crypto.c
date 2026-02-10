@@ -106,8 +106,16 @@ esp_err_t crypto_set_claim_token(char* buffer, size_t len) {
     return crypto_storage_set_claim_token(buffer, len);
 }
 
-esp_err_t store_ds_params(uint8_t* c, uint8_t* iv, uint8_t key_id, uint16_t rsa_length) {
-    return crypto_storage_store_ds_params(c, iv, key_id, rsa_length);
+esp_err_t crypto_store_ds_params(uint32_t key_block_id, uint32_t rsa_len,
+                                 const uint8_t* cipher_c, size_t cipher_c_len,
+                                 const uint8_t* iv, size_t iv_len) {
+    return crypto_storage_store_ds_params(key_block_id, rsa_len, cipher_c, cipher_c_len, iv, iv_len);
+}
+
+esp_err_t crypto_get_ds_params(uint32_t* key_block_id, uint32_t* rsa_len,
+                               uint8_t* cipher_c, size_t* cipher_c_len,
+                               uint8_t* iv, size_t* iv_len) {
+    return crypto_storage_get_ds_params(key_block_id, rsa_len, cipher_c, cipher_c_len, iv, iv_len);
 }
 
 bool crypto_will_generate_key(void) {

@@ -22,13 +22,15 @@
 // Control responses (single byte)
 #define BLE_RSP_ACK 0xFF         // Acknowledge (for reset)
 #define BLE_RSP_EMPTY 0x00       // No data available
+#define BLE_RSP_BUSY 0xEE        // Server busy, retry later
 
 // Receive result codes
 typedef enum {
     BLE_RECEIVE_OK = 0,          // Chunk received, more expected
     BLE_RECEIVE_COMPLETE = 1,    // All chunks received, message complete
     BLE_RECEIVE_CRC_ERROR = 2,   // CRC mismatch, need retransmit
-    BLE_RECEIVE_ERROR = 3        // Other error (reset state)
+    BLE_RECEIVE_ERROR = 3,       // Other error (reset state)
+    BLE_RECEIVE_BUSY = 4         // Cannot accept request, transmission in progress
 } ble_receive_result_t;
 
 #ifdef __cplusplus

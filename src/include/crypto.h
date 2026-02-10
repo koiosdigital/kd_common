@@ -32,12 +32,15 @@ extern "C" {
 esp_err_t crypto_init(void);
 esp_err_t crypto_get_csr(char* buffer, size_t* len);
 esp_err_t crypto_clear_csr(void);
-esp_err_t store_ds_params(uint8_t* c, uint8_t* iv, uint8_t key_id, uint16_t rsa_length);
+esp_err_t crypto_store_ds_params(uint32_t key_block_id, uint32_t rsa_len,
+                                 const uint8_t* cipher_c, size_t cipher_c_len,
+                                 const uint8_t* iv, size_t iv_len);
+esp_err_t crypto_get_ds_params(uint32_t* key_block_id, uint32_t* rsa_len,
+                               uint8_t* cipher_c, size_t* cipher_c_len,
+                               uint8_t* iv, size_t* iv_len);
 esp_err_t crypto_set_device_cert(char* buffer, size_t len);
 esp_err_t kd_common_clear_device_cert(void);
 esp_err_t crypto_set_claim_token(char* buffer, size_t len);
-char* crypto_get_ds_params_json(void);
-esp_err_t crypto_store_ds_params_json(char* params);
 bool crypto_will_generate_key(void);
 esp_err_t crypto_clear_all_data(void);
 esp_err_t crypto_set_ds_key_block(uint8_t block);
