@@ -107,14 +107,14 @@ esp_err_t crypto_set_claim_token(char* buffer, size_t len) {
 }
 
 esp_err_t crypto_store_ds_params(uint32_t key_block_id, uint32_t rsa_len,
-                                 const uint8_t* cipher_c, size_t cipher_c_len,
-                                 const uint8_t* iv, size_t iv_len) {
+    const uint8_t* cipher_c, size_t cipher_c_len,
+    const uint8_t* iv, size_t iv_len) {
     return crypto_storage_store_ds_params(key_block_id, rsa_len, cipher_c, cipher_c_len, iv, iv_len);
 }
 
 esp_err_t crypto_get_ds_params(uint32_t* key_block_id, uint32_t* rsa_len,
-                               uint8_t* cipher_c, size_t* cipher_c_len,
-                               uint8_t* iv, size_t* iv_len) {
+    uint8_t* cipher_c, size_t* cipher_c_len,
+    uint8_t* iv, size_t* iv_len) {
     return crypto_storage_get_ds_params(key_block_id, rsa_len, cipher_c, cipher_c_len, iv, iv_len);
 }
 
@@ -128,8 +128,7 @@ static void crypto_log_provisioning_info(void) {
     CryptoState_t state = kd_common_crypto_get_state();
 
     // Parseable pattern for provisioner script
-    printf("\n\n[CRYPTO_STATUS] %d\n\n", state);
-    fflush(stdout);
+    ESP_LOGI(TAG, "\n\n[CRYPTO_STATUS] %d\n\n", state);
 
     if (state == CRYPTO_STATE_VALID_CSR) {
         // Get and print CSR if available
@@ -139,8 +138,7 @@ static void crypto_log_provisioning_info(void) {
             char* csr = (char*)heap_caps_malloc_prefer(csr_len + 1, 2, MALLOC_CAP_SPIRAM, MALLOC_CAP_8BIT);
             if (csr != NULL && crypto_get_csr(csr, &csr_len) == ESP_OK) {
                 csr[csr_len] = '\0';  // Ensure null termination
-                printf("\n\n[CSR_BEGIN]\n%s[CSR_END]\n\n", csr);
-                fflush(stdout);
+                ESP_LOGI(TAG, "\n\n[CSR_BEGIN]\n%s[CSR_END]\n\n", csr);
                 heap_caps_free(csr);
             }
         }
