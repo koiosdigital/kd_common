@@ -4,6 +4,9 @@
 #include <stdlib.h>
 
 #include <esp_log.h>
+#include <esp_heap_caps.h>
+
+#include "kd_mem.h"
 
 static const char* TAG = "ble_proto";
 
@@ -60,14 +63,14 @@ static void set_state(ble_state_t new_state) {
 static bool proto_init(void) {
     if (s_proto.initialized) return true;
 
-    s_proto.buffer = (uint8_t*)calloc(BLE_CONSOLE_MAX_PAYLOAD, 1);
+    s_proto.buffer = (uint8_t*)heap_caps_calloc(BLE_CONSOLE_MAX_PAYLOAD, 1, KD_MALLOC_CAP);
     if (!s_proto.buffer) {
-        ESP_LOGE(TAG, "Failed to alloc buffer from internal RAM");
+        ESP_LOGE(TAG, "Failed to alloc buffer");
         return false;
     }
 
     s_proto.initialized = true;
-    ESP_LOGI(TAG, "BLE protocol buffer allocated from internal RAM (16KB)");
+    ESP_LOGI(TAG, "BLE protocol buffer allocated (16KB)");
     return true;
 }
 

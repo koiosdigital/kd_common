@@ -2,6 +2,7 @@
 
 #include "sdkconfig.h"
 
+#include <soc/soc_caps.h>
 #include <esp_ds.h>
 #include <esp_efuse.h>
 #include <freertos/FreeRTOS.h>
@@ -26,7 +27,7 @@ extern "C" {
 
 #define CRYPTO_MAX_CLAIM_TOKEN_SIZE 256
 
-#define CRYPTO_KEY_SIZE 4096
+#define CRYPTO_KEY_SIZE SOC_RSA_MAX_BIT_LEN
 #define CRYPTO_PEM_BUFFER_SIZE 12288  // 12KB for fullchain (leaf + intermediates)
 
 // Get current DS key block (reads from NVS, defaults to EFUSE_BLK_KEY3)

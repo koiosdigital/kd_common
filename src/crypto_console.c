@@ -5,6 +5,7 @@
 
 #include "crypto.h"
 #include "kd_common.h"
+#include "kd_mem.h"
 
 #include <esp_efuse.h>
 #include <esp_log.h>
@@ -67,7 +68,7 @@ static int cmd_set_cert_start(int argc, char** argv) {
     }
 
     // Allocate buffer
-    s_cert_upload_buffer = (char*)calloc(CERT_UPLOAD_BUFFER_SIZE, 1);
+    s_cert_upload_buffer = (char*)heap_caps_calloc(CERT_UPLOAD_BUFFER_SIZE, 1, KD_MALLOC_CAP);
     if (s_cert_upload_buffer == NULL) {
         printf("[ERROR] Failed to allocate upload buffer\n");
         return 1;

@@ -20,6 +20,7 @@
 #include <assert.h>
 
 #include "kd_common.h"
+#include "kd_mem.h"
 
 #if SOC_USB_SERIAL_JTAG_SUPPORTED
 #if !CONFIG_ESP_CONSOLE_SECONDARY_NONE
@@ -49,7 +50,7 @@ static void register_free(void)
 static int heap_info(int argc, char** argv)
 {
     uint32_t free_internal = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
-    uint32_t free_external = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+    uint32_t free_external = heap_caps_get_free_size(KD_MALLOC_CAP);
     uint32_t min_internal = heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL);
 
     printf("free_internal: %" PRIu32 "\n", free_internal);

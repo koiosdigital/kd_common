@@ -4,6 +4,7 @@
 
 #include "crypto_internal.h"
 #include "crypto_console.h"
+#include "kd_mem.h"
 
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
@@ -135,7 +136,7 @@ static void crypto_log_provisioning_info(void) {
         size_t csr_len = 0;
         if (crypto_get_csr(NULL, &csr_len) == ESP_OK && csr_len > 0) {
             // Allocate extra byte for null terminator (CSR stored as blob without null)
-            char* csr = (char*)heap_caps_malloc_prefer(csr_len + 1, 2, MALLOC_CAP_SPIRAM, MALLOC_CAP_8BIT);
+            char* csr = (char*)heap_caps_malloc_prefer(csr_len + 1, 2, KD_MALLOC_CAP, MALLOC_CAP_8BIT);
             if (csr != NULL && crypto_get_csr(csr, &csr_len) == ESP_OK) {
                 csr[csr_len] = '\0';  // Ensure null termination
                 ESP_LOGI(TAG, "\n\n[CSR_BEGIN]\n%s[CSR_END]\n\n", csr);

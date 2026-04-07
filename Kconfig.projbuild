@@ -31,6 +31,22 @@ menu "KD Common Configuration"
             Stack size for the HTTP API server task. Increase if you encounter
             stack overflow issues.
 
+    choice KD_COMMON_MALLOC_TARGET
+        prompt "Large buffer allocation target"
+        default KD_COMMON_MALLOC_INTERNAL
+        help
+            Select where large buffers (BLE protocol, certs, etc.) are allocated.
+            Internal is always available. SPIRAM requires PSRAM to be enabled.
+
+        config KD_COMMON_MALLOC_INTERNAL
+            bool "Internal RAM"
+
+        config KD_COMMON_MALLOC_SPIRAM
+            bool "SPIRAM"
+            depends on SPIRAM
+
+    endchoice
+
     config KD_COMMON_CONSOLE_ENABLE
         bool "Enable console commands"
         default y
