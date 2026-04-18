@@ -18,16 +18,15 @@
 #include <freertos/task.h>
 
 #include "embedded_tz_db.h"
+#include "wifi.h"
 
-// Define NTP event base
-ESP_EVENT_DEFINE_BASE(KD_NTP_EVENTS);
 
 #define NTP_NVS_NAMESPACE "ntp_cfg"
 
 static const char* TAG = "ntp";
 
 static bool s_initialized = false;
-static bool s_synced = false;
+static atomic_bool s_synced = false;
 
 // Track if settings were modified before init (to preserve them)
 static bool s_fetch_tz_set_before_init = false;
@@ -260,16 +259,21 @@ static void spawn_tz_fetch_task(void) {
 }
 
 static void time_sync_callback(struct timeval* tv) {
-    s_synced = true;
+    if (tv == NULL) return;
+
+    // Sanity check: reject times before 2020 or after 2100
+    if (tv->tv_sec < 1577836800LL || tv->tv_sec > 4102444800LL) {
+        ESP_LOGW(TAG, "Rejecting invalid NTP time: %lld", (long long)tv->tv_sec);
+        return;
+    }
+
+    atomic_store(&s_synced, true);
 
     time_t now = tv->tv_sec;
     struct tm* tm_info = localtime(&now);
     char time_str[32];
     strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S %Z", tm_info);
     ESP_LOGI(TAG, "Time synchronized: %s", time_str);
-
-    // Post sync complete event
-    esp_event_post(KD_NTP_EVENTS, KD_NTP_EVENT_SYNC_COMPLETE, NULL, 0, 0);
 }
 
 static void start_sntp(void) {
@@ -288,25 +292,17 @@ static void start_sntp(void) {
     esp_sntp_init();
 }
 
-static void wifi_event_handler(void* arg, esp_event_base_t base, int32_t id, void* data) {
-    (void)arg;
-    (void)data;
+static void ntp_on_wifi_connect(void) {
+    apply_timezone_local();
+    start_sntp();
 
-    if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
-        // Apply cached timezone and start SNTP immediately
-        apply_timezone_local();
-        start_sntp();
+    if (s_config.auto_timezone && s_config.fetch_tz_on_boot) {
+        spawn_tz_fetch_task();
+    }
+}
 
-        // Fetch timezone from IP geolocation API if enabled
-        if (s_config.auto_timezone && s_config.fetch_tz_on_boot) {
-            spawn_tz_fetch_task();
-        }
-    }
-    else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
-        s_synced = false;
-        // Post sync lost event
-        esp_event_post(KD_NTP_EVENTS, KD_NTP_EVENT_SYNC_LOST, NULL, 0, 0);
-    }
+static void ntp_on_wifi_disconnect(void) {
+    atomic_store(&s_synced, false);
 }
 
 void ntp_init(void) {
@@ -322,15 +318,15 @@ void ntp_init(void) {
     setenv("TZ", posixTZ, 1);
     tzset();
 
-    // Register for WiFi events
-    esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, wifi_event_handler, NULL);
-    esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_STA_DISCONNECTED, wifi_event_handler, NULL);
+    // Register for centralized WiFi callbacks
+    wifi_on_connect(ntp_on_wifi_connect);
+    wifi_on_disconnect(ntp_on_wifi_disconnect);
 
     ESP_LOGI(TAG, "NTP initialized (tz_db version: %s)", tz_db_get_version());
 }
 
 bool ntp_is_synced(void) {
-    return s_synced;
+    return atomic_load(&s_synced);
 }
 
 void ntp_sync(void) {

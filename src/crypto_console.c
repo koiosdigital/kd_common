@@ -142,6 +142,8 @@ static int cmd_set_cert_commit(int argc, char** argv) {
         (unsigned char*)s_cert_upload_buffer, s_cert_upload_pos);
     if (ret != MBEDTLS_ERR_BASE64_BUFFER_TOO_SMALL || decoded_len == 0) {
         printf("[ERROR] Invalid base64 data\n");
+        free(s_cert_upload_buffer);
+        s_cert_upload_buffer = NULL;
         s_cert_upload_active = false;
         return 1;
     }
@@ -149,6 +151,8 @@ static int cmd_set_cert_commit(int argc, char** argv) {
     char* decoded_cert = (char*)malloc(decoded_len + 1);
     if (decoded_cert == NULL) {
         printf("[ERROR] Failed to allocate decode buffer\n");
+        free(s_cert_upload_buffer);
+        s_cert_upload_buffer = NULL;
         s_cert_upload_active = false;
         return 1;
     }
@@ -158,6 +162,8 @@ static int cmd_set_cert_commit(int argc, char** argv) {
     if (ret != 0) {
         printf("[ERROR] Base64 decode failed\n");
         free(decoded_cert);
+        free(s_cert_upload_buffer);
+        s_cert_upload_buffer = NULL;
         s_cert_upload_active = false;
         return 1;
     }
@@ -167,6 +173,8 @@ static int cmd_set_cert_commit(int argc, char** argv) {
     if (strstr(decoded_cert, "-----BEGIN CERTIFICATE-----") == NULL) {
         printf("[ERROR] Invalid certificate format (not PEM)\n");
         free(decoded_cert);
+        free(s_cert_upload_buffer);
+        s_cert_upload_buffer = NULL;
         s_cert_upload_active = false;
         return 1;
     }

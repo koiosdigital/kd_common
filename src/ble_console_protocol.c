@@ -203,6 +203,11 @@ ble_receive_result_t ble_protocol_receive_chunk(const uint8_t* frame, size_t fra
             ESP_LOGW(TAG, "Busy - transmission in progress");
             return BLE_RECEIVE_BUSY;
         }
+        // Validate total_len fits in our buffer
+        if (total_len == 0 || total_len > BLE_CONSOLE_MAX_PAYLOAD) {
+            ESP_LOGW(TAG, "invalid total_len: %u (max %u)", total_len, BLE_CONSOLE_MAX_PAYLOAD);
+            return BLE_RECEIVE_ERROR;
+        }
         reset_input();
         set_state(BLE_STATE_RECEIVING);
         s_proto.in_total_len = total_len;

@@ -13,6 +13,7 @@
 
 #include "kd_common.h"
 #include "ble_console.h"
+#include "ble_console_protocol.h"
 
 static const char* TAG = "kd_ble_prov";
 
@@ -122,7 +123,6 @@ static void provisioning_event_handler(void* arg, esp_event_base_t event_base,
             s_state.is_wifi_connected = false;
             // Reconnect unless waiting for new provisioning credentials
             if (!s_state.prov_cred_failed) {
-                vTaskDelay(pdMS_TO_TICKS(2500));
                 esp_wifi_connect();
             }
         }
@@ -147,6 +147,7 @@ static void provisioning_event_handler(void* arg, esp_event_base_t event_base,
 
         case NETWORK_PROV_END:
             ESP_LOGI(TAG, "Provisioning ended");
+            ble_protocol_reset_all();  // Clean up BLE protocol state on disconnect
             network_prov_mgr_deinit();  // This frees BT memory via scheme handler
             s_state.provisioning_started = false;
             break;
@@ -172,7 +173,8 @@ char* kd_common_provisioning_get_srp_password(void) {
     }
 
 #if defined(CONFIG_KD_COMMON_SRP_FORMAT_STATIC)
-    strcpy(s_state.srp_password, CONFIG_KD_COMMON_SRP_STATIC_PASSWORD);
+    strncpy(s_state.srp_password, CONFIG_KD_COMMON_SRP_STATIC_PASSWORD, sizeof(s_state.srp_password) - 1);
+    s_state.srp_password[sizeof(s_state.srp_password) - 1] = '\0';
 #elif defined(CONFIG_KD_COMMON_SRP_FORMAT_NUMERIC_6)
     esp_fill_random(s_state.srp_password, 6);
     for (int i = 0; i < 6; i++) {
@@ -206,14 +208,19 @@ void kd_common_start_provisioning(void) {
 
 //MARK: Internal API
 
+static bool s_prov_events_registered = false;
+
 void provisioning_init(void) {
     ESP_LOGI(TAG, "Initializing");
 
-    // Register event handlers for WiFi state management
-    esp_event_handler_register(NETWORK_PROV_EVENT, ESP_EVENT_ANY_ID, &provisioning_event_handler, NULL);
-    esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_STA_DISCONNECTED, &provisioning_event_handler, NULL);
-    esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_STA_START, &provisioning_event_handler, NULL);
-    esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &provisioning_event_handler, NULL);
+    // Register event handlers for WiFi state management (only once)
+    if (!s_prov_events_registered) {
+        esp_event_handler_register(NETWORK_PROV_EVENT, ESP_EVENT_ANY_ID, &provisioning_event_handler, NULL);
+        esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_STA_DISCONNECTED, &provisioning_event_handler, NULL);
+        esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_STA_START, &provisioning_event_handler, NULL);
+        esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &provisioning_event_handler, NULL);
+        s_prov_events_registered = true;
+    }
 
     // Check if already provisioned (requires wifi to be initialized)
     bool provisioned = false;

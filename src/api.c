@@ -4,6 +4,7 @@
 
 #include "kdmdns.h"
 #include "kd_common.h"
+#include "wifi.h"
 #include "esp_http_server.h"
 #include "cJSON.h"
 #include <esp_app_desc.h>
@@ -73,16 +74,12 @@ void api_stop_server(void) {
     stop_server_internal();
 }
 
-static void wifi_event_handler(void* arg, esp_event_base_t base, int32_t id, void* event_data) {
-    (void)arg;
-    (void)event_data;
+static void api_on_wifi_connect(void) {
+    start_server();
+}
 
-    if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
-        start_server();
-    }
-    else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
-        stop_server_internal();
-    }
+static void api_on_wifi_disconnect(void) {
+    stop_server_internal();
 }
 
 static esp_err_t about_handler(httpd_req_t* req) {
@@ -150,7 +147,13 @@ static esp_err_t system_config_get_handler(httpd_req_t* req) {
 }
 
 static esp_err_t system_config_post_handler(httpd_req_t* req) {
-    char content[512];
+    // Reject oversized requests
+    if (req->content_len > 1024) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Request body too large");
+        return ESP_FAIL;
+    }
+
+    char content[1024];
     int ret = httpd_req_recv(req, content, sizeof(content) - 1);
     if (ret <= 0) {
         if (ret == HTTPD_SOCK_ERR_TIMEOUT) {
@@ -338,8 +341,8 @@ static void register_internal_handlers(void) {
 }
 
 void api_init(void) {
-    esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, wifi_event_handler, NULL);
-    esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_STA_DISCONNECTED, wifi_event_handler, NULL);
+    wifi_on_connect(api_on_wifi_connect);
+    wifi_on_disconnect(api_on_wifi_disconnect);
     ESP_LOGI(TAG, "API initialized (waiting for WiFi)");
 }
 

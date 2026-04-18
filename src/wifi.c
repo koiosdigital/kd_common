@@ -40,6 +40,13 @@ static esp_netif_t* s_sta_netif = NULL;
 static bool s_pending_restart = false;
 static bool s_event_handler_registered = false;
 
+// Centralized WiFi event callback system
+#define MAX_WIFI_CALLBACKS 8
+static wifi_connect_fn s_connect_cbs[MAX_WIFI_CALLBACKS];
+static wifi_disconnect_fn s_disconnect_cbs[MAX_WIFI_CALLBACKS];
+static size_t s_connect_cb_count = 0;
+static size_t s_disconnect_cb_count = 0;
+
 // Forward declarations
 void wifi_restart(void);
 void wifi_start(void);
@@ -54,6 +61,30 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t e
             ESP_LOGI(TAG, "WiFi stopped after credential clear, restarting...");
             wifi_restart();
         }
+    }
+    else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
+        ESP_LOGI(TAG, "Got IP, dispatching to %u connect callbacks", (unsigned)s_connect_cb_count);
+        for (size_t i = 0; i < s_connect_cb_count; i++) {
+            if (s_connect_cbs[i]) s_connect_cbs[i]();
+        }
+    }
+    else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
+        ESP_LOGD(TAG, "Disconnected, dispatching to %u disconnect callbacks", (unsigned)s_disconnect_cb_count);
+        for (size_t i = 0; i < s_disconnect_cb_count; i++) {
+            if (s_disconnect_cbs[i]) s_disconnect_cbs[i]();
+        }
+    }
+}
+
+void wifi_on_connect(wifi_connect_fn cb) {
+    if (cb && s_connect_cb_count < MAX_WIFI_CALLBACKS) {
+        s_connect_cbs[s_connect_cb_count++] = cb;
+    }
+}
+
+void wifi_on_disconnect(wifi_disconnect_fn cb) {
+    if (cb && s_disconnect_cb_count < MAX_WIFI_CALLBACKS) {
+        s_disconnect_cbs[s_disconnect_cb_count++] = cb;
     }
 }
 
@@ -72,9 +103,11 @@ void wifi_init(void) {
     wifi_console_init();
 #endif
 
-    // Register for WiFi stop event (for credential clear restart) - only once
+    // Register central event handler for all WiFi lifecycle events (only once)
     if (!s_event_handler_registered) {
         esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_STA_STOP, wifi_event_handler, NULL);
+        esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_STA_DISCONNECTED, wifi_event_handler, NULL);
+        esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, wifi_event_handler, NULL);
         s_event_handler_registered = true;
     }
 
@@ -82,8 +115,8 @@ void wifi_init(void) {
     esp_netif_init();
     s_sta_netif = esp_netif_create_default_wifi_sta();
 
-    // Start WiFi driver
-    wifi_start();
+    // NOTE: wifi_start() is NOT called here. kd_common_init() calls it
+    // after all modules have registered their connect/disconnect callbacks.
 }
 
 void wifi_start(void) {

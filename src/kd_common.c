@@ -32,16 +32,22 @@ void kd_common_init(void) {
 #endif
 
 #ifdef CONFIG_KD_COMMON_CRYPTO_ENABLE
-    crypto_init();
+    ret = crypto_init();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "crypto_init failed: %s", esp_err_to_name(ret));
+    }
 #endif
 
+    // Phase 1: Initialize WiFi infrastructure (netif, central event handler)
+    // Does NOT start WiFi yet - modules register callbacks first.
     wifi_init();
 
-    provisioning_init();
-
+    // Phase 2: Initialize modules that register WiFi connect/disconnect callbacks.
+    // All callbacks are registered BEFORE WiFi starts, preventing the race
+    // where GOT_IP fires before handlers are ready.
     ntp_init();
 
-#ifdef ENABLE_OTA
+#ifdef CONFIG_KD_COMMON_OTA_ENABLE
     ota_init();
 #endif
 
@@ -50,6 +56,13 @@ void kd_common_init(void) {
 #ifdef CONFIG_KD_COMMON_API_ENABLE
     api_init();
 #endif
+
+    // Phase 3: Start provisioning (registers its own event handlers for
+    // PROV events and STA_START/DISCONNECTED for reconnect logic).
+    provisioning_init();
+
+    // Phase 4: Start WiFi. All event handlers and callbacks are now registered.
+    wifi_start();
 }
 
 void kd_common_reverse_bytes(uint8_t* data, size_t len) {
@@ -60,7 +73,7 @@ void kd_common_reverse_bytes(uint8_t* data, size_t len) {
     }
 }
 
-#ifdef ENABLE_OTA
+#ifdef CONFIG_KD_COMMON_OTA_ENABLE
 bool kd_common_ota_has_completed_boot_check(void) {
     return ota_has_completed_boot_check();
 }

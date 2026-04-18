@@ -16,7 +16,7 @@ static const char* TAG = "kd_crypto_storage";
 //MARK: CSR Operations
 
 esp_err_t crypto_storage_get_csr(char* buffer, size_t* len) {
-    nvs_helper_t nvs = nvs_helper_open(CRYPTO_NVS_NAMESPACE, NVS_READWRITE);
+    nvs_helper_t nvs = nvs_helper_open(CRYPTO_NVS_NAMESPACE, NVS_READONLY);
     if (!nvs.valid) {
         ESP_LOGE(TAG, "nvs open failed: %s", esp_err_to_name(nvs.open_err));
         return nvs.open_err;
@@ -88,7 +88,7 @@ esp_err_t crypto_storage_store_csr(const unsigned char* csr_buffer, size_t len) 
 //MARK: Device Certificate Operations
 
 esp_err_t crypto_storage_get_device_cert(char* buffer, size_t* len) {
-    nvs_helper_t nvs = nvs_helper_open(CRYPTO_NVS_NAMESPACE, NVS_READWRITE);
+    nvs_helper_t nvs = nvs_helper_open(CRYPTO_NVS_NAMESPACE, NVS_READONLY);
     if (!nvs.valid) {
         ESP_LOGE(TAG, "nvs open failed: %s", esp_err_to_name(nvs.open_err));
         return nvs.open_err;
@@ -154,7 +154,7 @@ esp_err_t crypto_storage_clear_device_cert(void) {
 //MARK: Claim Token Operations
 
 esp_err_t crypto_storage_get_claim_token(char* buffer, size_t* len) {
-    nvs_helper_t nvs = nvs_helper_open(CRYPTO_NVS_NAMESPACE, NVS_READWRITE);
+    nvs_helper_t nvs = nvs_helper_open(CRYPTO_NVS_NAMESPACE, NVS_READONLY);
     if (!nvs.valid) {
         ESP_LOGE(TAG, "nvs open failed: %s", esp_err_to_name(nvs.open_err));
         return nvs.open_err;

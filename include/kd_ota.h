@@ -2,7 +2,7 @@
 
 #include "sdkconfig.h"
 
-#ifdef ENABLE_OTA
+#ifdef CONFIG_KD_COMMON_OTA_ENABLE
 
 #include <stdbool.h>
 
@@ -18,4 +18,4 @@ void kd_common_check_ota(void);  // Trigger manual OTA check
 }
 #endif
 
-#endif // ENABLE_OTA
+#endif // CONFIG_KD_COMMON_OTA_ENABLE

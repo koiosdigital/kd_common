@@ -22,7 +22,7 @@
 #include "kd_api.h"
 #endif
 
-#ifdef ENABLE_OTA
+#ifdef CONFIG_KD_COMMON_OTA_ENABLE
 #include "kd_ota.h"
 #endif
 

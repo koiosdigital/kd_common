@@ -278,11 +278,16 @@ static void crypto_setup_task(void* pvParameter) {
                                    encrypted->c, ESP_DS_C_LEN, iv, ESP_DS_IV_LEN);
 
     heap_caps_free(encrypted);
+    memset(ds_params, 0, sizeof(esp_ds_p_data_t));
     free(ds_params);
 
     // Burn to eFuse (commented out for testing)
     esp_efuse_write_key(params->ds_key_block, ESP_EFUSE_KEY_PURPOSE_HMAC_DOWN_DIGITAL_SIGNATURE, hmac, 32);
     esp_efuse_set_read_protect(params->ds_key_block);
+
+    // Securely wipe sensitive keying material
+    memset(hmac, 0, sizeof(hmac));
+    memset(iv, 0, sizeof(iv));
 
     psa_destroy_key(key_id);
     params->result = ESP_OK;
@@ -298,8 +303,7 @@ cleanup:
 // Main: ensure_key_exists - orchestrates all
 // ============================================
 esp_err_t ensure_key_exists(void) {
-    g_keygen_mutex = xSemaphoreCreateBinary();
-    xSemaphoreGive(g_keygen_mutex);
+    // Mutex already created in crypto_init() via crypto_init_mutex()
 
     esp_efuse_block_t ds_key_block = crypto_get_ds_key_block_internal();
     bool has_fuses = esp_efuse_get_key_purpose(ds_key_block) ==

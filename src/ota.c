@@ -15,6 +15,7 @@
 
 #include <cJSON.h>
 #include "kd_common.h"
+#include "wifi.h"
 
 #include <stdatomic.h>
 #include <string.h>
@@ -168,7 +169,11 @@ static check_result_t check_for_update(const char** out_url) {
 
     *out_url = strdup(url_item->valuestring);
     cJSON_Delete(root);
-    return *out_url ? CHECK_RESULT_UPDATE_AVAILABLE : CHECK_RESULT_SUCCESS;
+    if (*out_url == NULL) {
+        ESP_LOGE(TAG, "strdup failed for OTA URL");
+        return CHECK_RESULT_NETWORK_ERROR;
+    }
+    return CHECK_RESULT_UPDATE_AVAILABLE;
 }
 
 static bool perform_ota_update(const char* url) {
@@ -303,16 +308,10 @@ static void timer_callback(void* arg) {
 // IP Event Handler
 //------------------------------------------------------------------------------
 
-static void ip_event_handler(void* arg, esp_event_base_t base, int32_t event_id, void* event_data) {
-    (void)arg;
-    (void)base;
-    (void)event_data;
-
-    if (event_id == IP_EVENT_STA_GOT_IP) {
-        if (atomic_load(&s_boot_check_pending)) {
-            ESP_LOGI(TAG, "Got IP, starting boot check");
-            spawn_check_task(true);  // Boot check
-        }
+static void ota_on_wifi_connect(void) {
+    if (atomic_load(&s_boot_check_pending)) {
+        ESP_LOGI(TAG, "Got IP, starting boot check");
+        spawn_check_task(true);
     }
 }
 
@@ -335,9 +334,8 @@ void ota_init(void) {
         ESP_LOGE(TAG, "Failed to create timer: %s", esp_err_to_name(err));
     }
 
-    // Register for IP events to trigger boot check
-    esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP,
-        ip_event_handler, NULL);
+    // Register for centralized WiFi connect callback
+    wifi_on_connect(ota_on_wifi_connect);
 
     ESP_LOGI(TAG, "Initialized (event-driven)");
 }

@@ -1,19 +1,10 @@
 #pragma once
 
-#include "esp_event.h"
 #include <stdbool.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-// NTP Events - posted when sync state changes
-ESP_EVENT_DECLARE_BASE(KD_NTP_EVENTS);
-
-typedef enum {
-    KD_NTP_EVENT_SYNC_COMPLETE = 0,  // Time successfully synchronized
-    KD_NTP_EVENT_SYNC_LOST = 1,      // WiFi disconnected, sync may be stale
-} kd_ntp_event_id_t;
 
 // NTP/Time functions
 bool kd_common_ntp_is_synced(void);

@@ -16,6 +16,12 @@ menu "KD Common Configuration"
             CSR generation, and DS peripheral signing. Requires DS peripheral
             support on the target chip.
 
+    config KD_COMMON_OTA_ENABLE
+        bool "Enable OTA firmware updates"
+        default y
+        help
+            Enable over-the-air firmware update checking and installation.
+
     config KD_COMMON_API_ENABLE
         bool "Enable HTTP API server"
         default y

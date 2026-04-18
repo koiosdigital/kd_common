@@ -23,8 +23,15 @@
 
 static const char* TAG = "kd_crypto";
 
-// Global keygen mutex definition
+// Global keygen mutex - created early in crypto_init() before any usage
 SemaphoreHandle_t g_keygen_mutex = NULL;
+
+static void crypto_init_mutex(void) {
+    if (g_keygen_mutex == NULL) {
+        g_keygen_mutex = xSemaphoreCreateBinary();
+        xSemaphoreGive(g_keygen_mutex);
+    }
+}
 
 //MARK: Public API
 
@@ -53,6 +60,7 @@ CryptoState_t kd_common_crypto_get_state(void) {
             state = CRYPTO_STATE_BAD_DS_PARAMS;
         }
         else {
+            memset(ds_data_ctx->esp_ds_data, 0, sizeof(esp_ds_data_t));
             free(ds_data_ctx->esp_ds_data);
             free(ds_data_ctx);
         }
@@ -147,6 +155,7 @@ static void crypto_log_provisioning_info(void) {
 }
 
 esp_err_t crypto_init(void) {
+    crypto_init_mutex();
 #ifdef CONFIG_KD_COMMON_CONSOLE_ENABLE
     crypto_console_init();
 #endif
@@ -301,6 +310,7 @@ esp_err_t kd_common_crypto_test_ds_signing(void) {
 
     ret = esp_ds_finish_sign(signature, ds_sign_ctx);
     heap_caps_free(padded_msg);
+    memset(ds_ctx->esp_ds_data, 0, sizeof(esp_ds_data_t));
     free(ds_ctx->esp_ds_data);
     free(ds_ctx);
 
@@ -314,12 +324,6 @@ esp_err_t kd_common_crypto_test_ds_signing(void) {
 
     // Reverse signature back to big-endian for verification
     kd_common_reverse_bytes(signature, rsa_bytes);
-
-    ESP_LOGI(TAG, "Signature (first 16 bytes): %02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x",
-        signature[0], signature[1], signature[2], signature[3],
-        signature[4], signature[5], signature[6], signature[7],
-        signature[8], signature[9], signature[10], signature[11],
-        signature[12], signature[13], signature[14], signature[15]);
 
     // Verify signature using PSA
     status = psa_verify_hash(psa_key_id, PSA_ALG_RSA_PKCS1V15_SIGN(PSA_ALG_SHA_256),
