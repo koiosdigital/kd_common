@@ -74,6 +74,7 @@ esp_err_t kd_common_api_register_uri_handler(httpd_handle_t server,
 
 // Forward declarations
 static void register_internal_handlers(void);
+static void install_err_handlers(void);
 static void start_server(void);
 static void stop_server(void);
 
@@ -94,6 +95,9 @@ static void start_server(void) {
     }
 
     ESP_LOGI(TAG, "HTTP server started");
+
+    // Error-code handlers (404/405/etc) so unmatched requests get CORS too.
+    install_err_handlers();
 
     // Register internal kd_common handlers
     register_internal_handlers();
@@ -335,23 +339,24 @@ static esp_err_t time_zones_handler(httpd_req_t* req) {
 }
 
 static esp_err_t wildcard_options_handler(httpd_req_t* req) {
-    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-    httpd_resp_set_hdr(req, "Access-Control-Allow-Methods", "GET,POST,PATCH,DELETE,OPTIONS");
-    httpd_resp_set_hdr(req, "Access-Control-Allow-Headers", "Content-Type,Authorization");
-    httpd_resp_set_hdr(req, "Access-Control-Allow-Credentials", "true");
+    // CORS headers come from the kd_common_api_set_pre_handler() hook —
+    // the application registers a single source of truth there. This
+    // handler just sends an empty 200 response in reply to the preflight.
     httpd_resp_set_type(req, "application/json");
     httpd_resp_send(req, NULL, 0);
     return ESP_OK;
 }
 
 static void register_internal_handlers(void) {
+    // Register our own data routes via the wrapper so the app-installed
+    // pre-handler (e.g. CORS) runs on them too.
     static httpd_uri_t about_uri = {
         .uri = "/api/about",
         .method = HTTP_GET,
         .handler = about_handler,
         .user_ctx = NULL
     };
-    httpd_register_uri_handler(s_kd_api_server, &about_uri);
+    kd_common_api_register_uri_handler(s_kd_api_server, &about_uri);
 
     static httpd_uri_t system_config_get_uri = {
         .uri = "/api/system/config",
@@ -359,7 +364,7 @@ static void register_internal_handlers(void) {
         .handler = system_config_get_handler,
         .user_ctx = NULL
     };
-    httpd_register_uri_handler(s_kd_api_server, &system_config_get_uri);
+    kd_common_api_register_uri_handler(s_kd_api_server, &system_config_get_uri);
 
     static httpd_uri_t system_config_post_uri = {
         .uri = "/api/system/config",
@@ -367,7 +372,7 @@ static void register_internal_handlers(void) {
         .handler = system_config_post_handler,
         .user_ctx = NULL
     };
-    httpd_register_uri_handler(s_kd_api_server, &system_config_post_uri);
+    kd_common_api_register_uri_handler(s_kd_api_server, &system_config_post_uri);
 
     static httpd_uri_t time_zones_uri = {
         .uri = "/api/time/zonedb",
@@ -375,15 +380,51 @@ static void register_internal_handlers(void) {
         .handler = time_zones_handler,
         .user_ctx = NULL
     };
-    httpd_register_uri_handler(s_kd_api_server, &time_zones_uri);
+    kd_common_api_register_uri_handler(s_kd_api_server, &time_zones_uri);
 
+    // OPTIONS preflight also goes through the wrapper so CORS headers
+    // come from the single pre-handler, not from this handler itself.
     static httpd_uri_t options_uri = {
         .uri = "/api/*",
         .method = HTTP_OPTIONS,
         .handler = wildcard_options_handler,
         .user_ctx = NULL
     };
-    httpd_register_uri_handler(s_kd_api_server, &options_uri);
+    kd_common_api_register_uri_handler(s_kd_api_server, &options_uri);
+}
+
+// ---------------------------------------------------------------------------
+// Error-code handler: ensures 404/405/etc responses ALSO carry CORS headers,
+// so browsers don't reject error responses for cross-origin requests. This
+// runs INSTEAD of the normal handler path — the pre-handler hook isn't
+// invoked for unmatched requests, so we call it manually.
+// ---------------------------------------------------------------------------
+
+static esp_err_t kd_api_err_handler(httpd_req_t* req, httpd_err_code_t err) {
+    // s_pre_handler is the file-static set by kd_common_api_set_pre_handler.
+    if (s_pre_handler) s_pre_handler(req);
+    // Use the default ESP-IDF status string for this error code.
+    const char* status;
+    switch (err) {
+        case HTTPD_404_NOT_FOUND:         status = "404 Not Found"; break;
+        case HTTPD_405_METHOD_NOT_ALLOWED: status = "405 Method Not Allowed"; break;
+        case HTTPD_408_REQ_TIMEOUT:       status = "408 Request Timeout"; break;
+        case HTTPD_414_URI_TOO_LONG:      status = "414 URI Too Long"; break;
+        case HTTPD_500_INTERNAL_SERVER_ERROR: status = "500 Internal Server Error"; break;
+        default:                          status = "400 Bad Request"; break;
+    }
+    httpd_resp_set_status(req, status);
+    httpd_resp_set_type(req, "text/plain");
+    httpd_resp_send(req, status, HTTPD_RESP_USE_STRLEN);
+    return ESP_OK;   // ESP_OK so the server doesn't abort the connection
+}
+
+static void install_err_handlers(void) {
+    httpd_register_err_handler(s_kd_api_server, HTTPD_404_NOT_FOUND,         kd_api_err_handler);
+    httpd_register_err_handler(s_kd_api_server, HTTPD_405_METHOD_NOT_ALLOWED, kd_api_err_handler);
+    httpd_register_err_handler(s_kd_api_server, HTTPD_408_REQ_TIMEOUT,       kd_api_err_handler);
+    httpd_register_err_handler(s_kd_api_server, HTTPD_414_URI_TOO_LONG,      kd_api_err_handler);
+    httpd_register_err_handler(s_kd_api_server, HTTPD_500_INTERNAL_SERVER_ERROR, kd_api_err_handler);
 }
 
 void api_init(void) {
