@@ -1,4 +1,5 @@
 #include "api.h"
+#include "kd_api.h"
 
 #ifdef CONFIG_KD_COMMON_API_ENABLE
 
@@ -11,6 +12,7 @@
 #include <esp_event.h>
 #include <esp_wifi.h>
 #include <esp_log.h>
+#include <stdlib.h>
 #include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -26,6 +28,50 @@ static httpd_handle_t s_kd_api_server = NULL;
 static api_handler_registrar_fn s_registrars[MAX_REGISTRARS] = { NULL };
 static size_t s_registrar_count = 0;
 
+// ---------------------------------------------------------------------------
+// Pre-handler hook + wrapper registration
+// ---------------------------------------------------------------------------
+
+// One per wrapped URI. Saved so the shim can dispatch to the real handler
+// with the user's original user_ctx.
+typedef struct {
+    esp_err_t (*user_handler)(httpd_req_t*);
+    void*     user_ctx;
+} kd_api_wrap_t;
+
+static kd_common_api_pre_handler_fn s_pre_handler = NULL;
+
+static esp_err_t kd_api_shim_handler(httpd_req_t* req) {
+    kd_api_wrap_t* w = (kd_api_wrap_t*)req->user_ctx;
+    // Run the pre-handler hook (e.g. to set CORS headers).
+    if (s_pre_handler) s_pre_handler(req);
+    // Restore caller's user_ctx before dispatch.
+    req->user_ctx = w->user_ctx;
+    return w->user_handler(req);
+}
+
+void kd_common_api_set_pre_handler(kd_common_api_pre_handler_fn hook) {
+    s_pre_handler = hook;
+}
+
+esp_err_t kd_common_api_register_uri_handler(httpd_handle_t server,
+                                              const httpd_uri_t* uri) {
+    if (!server || !uri || !uri->handler) return ESP_ERR_INVALID_ARG;
+
+    kd_api_wrap_t* w = (kd_api_wrap_t*)malloc(sizeof(kd_api_wrap_t));
+    if (!w) return ESP_ERR_NO_MEM;
+    w->user_handler = uri->handler;
+    w->user_ctx     = uri->user_ctx;
+
+    httpd_uri_t wrapped = *uri;
+    wrapped.handler  = kd_api_shim_handler;
+    wrapped.user_ctx = w;
+
+    esp_err_t r = httpd_register_uri_handler(server, &wrapped);
+    if (r != ESP_OK) free(w);
+    return r;
+}
+
 // Forward declarations
 static void register_internal_handlers(void);
 static void start_server(void);
@@ -37,7 +83,7 @@ static void start_server(void) {
     }
 
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-    config.max_uri_handlers = 30;
+    config.max_uri_handlers = 200;
     config.uri_match_fn = httpd_uri_match_wildcard;
     config.stack_size = CONFIG_KD_COMMON_API_HTTPD_TASK_STACK_SIZE;
 
