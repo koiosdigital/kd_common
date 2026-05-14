@@ -12,6 +12,7 @@
 #include <esp_event.h>
 #include <esp_wifi.h>
 #include <esp_log.h>
+#include <esp_system.h>
 #include <stdlib.h>
 #include <string.h>
 #include "freertos/FreeRTOS.h"
@@ -41,13 +42,40 @@ typedef struct {
 
 static kd_common_api_pre_handler_fn s_pre_handler = NULL;
 
+#ifdef CONFIG_KD_COMMON_API_LOG_REQUESTS
+static const char* method_name(int method) {
+    switch (method) {
+        case HTTP_GET:     return "GET";
+        case HTTP_POST:    return "POST";
+        case HTTP_PUT:     return "PUT";
+        case HTTP_DELETE:  return "DELETE";
+        case HTTP_PATCH:   return "PATCH";
+        case HTTP_OPTIONS: return "OPTIONS";
+        case HTTP_HEAD:    return "HEAD";
+        default:           return "?";
+    }
+}
+#endif
+
 static esp_err_t kd_api_shim_handler(httpd_req_t* req) {
     kd_api_wrap_t* w = (kd_api_wrap_t*)req->user_ctx;
     // Run the pre-handler hook (e.g. to set CORS headers).
     if (s_pre_handler) s_pre_handler(req);
     // Restore caller's user_ctx before dispatch.
     req->user_ctx = w->user_ctx;
+
+#ifdef CONFIG_KD_COMMON_API_LOG_REQUESTS
+    // Heap-leak diagnostic: log every route invocation + heap after. Single
+    // line per request so the serial log can be diffed to localize leaks.
+    esp_err_t err = w->user_handler(req);
+    ESP_LOGI(TAG, "%s %s -> %s heap=%lu",
+             method_name(req->method), req->uri,
+             err == ESP_OK ? "OK" : esp_err_to_name(err),
+             (unsigned long)esp_get_free_heap_size());
+    return err;
+#else
     return w->user_handler(req);
+#endif
 }
 
 void kd_common_api_set_pre_handler(kd_common_api_pre_handler_fn hook) {
@@ -149,7 +177,7 @@ static esp_err_t about_handler(httpd_req_t* req) {
     cJSON_AddItemToObject(json, "type", type);
     cJSON_AddItemToObject(json, "version", version);
 
-    char* json_string = cJSON_Print(json);
+    char* json_string = cJSON_PrintUnformatted(json);
     if (json_string == NULL) {
         cJSON_Delete(json);
         httpd_resp_send_500(req);
@@ -166,11 +194,12 @@ static esp_err_t about_handler(httpd_req_t* req) {
 }
 
 static esp_err_t system_config_get_handler(httpd_req_t* req) {
-    char* wifi_hostname = kd_common_get_wifi_hostname();
+    // kd_common_get_wifi_hostname() returns a pointer into a file-static cache
+    // (wifi.c s_hostname_cache.buffer) — DO NOT free it.
+    const char* wifi_hostname = kd_common_get_wifi_hostname();
 
     cJSON* json = cJSON_CreateObject();
     if (json == NULL) {
-        if (wifi_hostname) free(wifi_hostname);
         httpd_resp_send_500(req);
         return ESP_FAIL;
     }
@@ -180,7 +209,7 @@ static esp_err_t system_config_get_handler(httpd_req_t* req) {
     cJSON_AddStringToObject(json, "ntp_server", kd_common_get_ntp_server());
     cJSON_AddStringToObject(json, "wifi_hostname", wifi_hostname ? wifi_hostname : "");
 
-    char* json_string = cJSON_Print(json);
+    char* json_string = cJSON_PrintUnformatted(json);
     if (json_string == NULL) {
         cJSON_Delete(json);
         httpd_resp_send_500(req);
@@ -257,7 +286,7 @@ static esp_err_t system_config_post_handler(httpd_req_t* req) {
     cJSON* response_json = cJSON_CreateObject();
     cJSON_AddStringToObject(response_json, "status", "success");
 
-    char* response_string = cJSON_Print(response_json);
+    char* response_string = cJSON_PrintUnformatted(response_json);
     if (response_string == NULL) {
         cJSON_Delete(response_json);
         httpd_resp_send_500(req);

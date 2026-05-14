@@ -37,6 +37,16 @@ menu "KD Common Configuration"
             Stack size for the HTTP API server task. Increase if you encounter
             stack overflow issues.
 
+    config KD_COMMON_API_LOG_REQUESTS
+        bool "Log every HTTP API request (method, URI, result, free heap)"
+        depends on KD_COMMON_API_ENABLE
+        default n
+        help
+            When enabled, the kd_common API shim logs one INFO line per
+            handled request with method, URI, handler result, and free heap
+            after the handler returns. Intended for heap-leak triage; keep
+            disabled in production to avoid log noise on the hot path.
+
     choice KD_COMMON_MALLOC_TARGET
         prompt "Large buffer allocation target"
         default KD_COMMON_MALLOC_INTERNAL
