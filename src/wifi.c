@@ -98,6 +98,20 @@ void kd_common_clear_wifi_credentials(void) {
     network_prov_mgr_reset_wifi_provisioning();
 }
 
+// Initialize the WiFi driver (esp_wifi_init + mode/ps/hostname). Called from
+// wifi_init() during boot and from wifi_restart() after deinit. Must run
+// before any consumer touches WiFi APIs (e.g. provisioning_init).
+static void wifi_driver_init(void) {
+    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+    esp_wifi_init(&cfg);
+    esp_wifi_set_mode(WIFI_MODE_STA);
+    esp_wifi_set_ps(WIFI_PS_NONE);
+
+    if (s_sta_netif) {
+        esp_netif_set_hostname(s_sta_netif, kd_common_get_wifi_hostname());
+    }
+}
+
 void wifi_init(void) {
 #ifdef CONFIG_KD_COMMON_CONSOLE_ENABLE
     wifi_console_init();
@@ -115,20 +129,13 @@ void wifi_init(void) {
     esp_netif_init();
     s_sta_netif = esp_netif_create_default_wifi_sta();
 
-    // NOTE: wifi_start() is NOT called here. kd_common_init() calls it
-    // after all modules have registered their connect/disconnect callbacks.
+    // Init the WiFi driver now so that modules initialized later in
+    // kd_common_init (notably provisioning) can safely call esp_wifi_* APIs.
+    // esp_wifi_start() is deferred to wifi_start() so callbacks register first.
+    wifi_driver_init();
 }
 
 void wifi_start(void) {
-    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
-    esp_wifi_init(&cfg);
-    esp_wifi_set_mode(WIFI_MODE_STA);
-    esp_wifi_set_ps(WIFI_PS_NONE);
-
-    if (s_sta_netif) {
-        esp_netif_set_hostname(s_sta_netif, kd_common_get_wifi_hostname());
-    }
-
     esp_wifi_start();
     esp_wifi_connect();  // Connect directly (reconnects handled by event handler)
 }
@@ -136,7 +143,8 @@ void wifi_start(void) {
 void wifi_restart(void) {
     esp_wifi_stop();
     esp_wifi_deinit();
-    wifi_start();  // NOT wifi_init() - netif already initialized
+    wifi_driver_init();  // netif already initialized; just re-init the driver
+    wifi_start();
 }
 
 void kd_common_set_wifi_hostname(const char* hostname) {

@@ -213,25 +213,19 @@ static bool s_prov_events_registered = false;
 void provisioning_init(void) {
     ESP_LOGI(TAG, "Initializing");
 
-    // Register event handlers for WiFi state management (only once)
+    // Register event handlers for WiFi state management (only once).
+    // We do NOT start BLE provisioning here — wifi_start() has not run yet, so
+    // network_prov_mgr_start_provisioning would fail with WIFI_NOT_INIT, and its
+    // cleanup path leaves BTDM controller state half-initialized; a subsequent
+    // retry crashes inside btdm_controller_init. The WIFI_EVENT_STA_START
+    // handler is the sole trigger to start provisioning after the WiFi driver
+    // is up and running.
     if (!s_prov_events_registered) {
         esp_event_handler_register(NETWORK_PROV_EVENT, ESP_EVENT_ANY_ID, &provisioning_event_handler, NULL);
         esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_STA_DISCONNECTED, &provisioning_event_handler, NULL);
         esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_STA_START, &provisioning_event_handler, NULL);
         esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &provisioning_event_handler, NULL);
         s_prov_events_registered = true;
-    }
-
-    // Check if already provisioned (requires wifi to be initialized)
-    bool provisioned = false;
-    network_prov_mgr_is_wifi_provisioned(&provisioned);
-
-    if (!provisioned) {
-        ESP_LOGI(TAG, "Not provisioned - starting BLE provisioning");
-        start_provisioning_internal();
-    }
-    else {
-        ESP_LOGI(TAG, "Already provisioned - skipping BLE");
     }
 }
 
