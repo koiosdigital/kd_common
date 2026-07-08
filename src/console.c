@@ -194,7 +194,7 @@ void console_init(void) {
     esp_console_repl_config_t repl_config = ESP_CONSOLE_REPL_CONFIG_DEFAULT();
 
     repl_config.prompt = "tty>";
-    repl_config.max_cmdline_length = 16384;  // 16KB for base64-encoded fullchain certs
+    repl_config.max_cmdline_length = 2048;  // 2KB
 
     esp_console_register_help_command();
     register_free();
