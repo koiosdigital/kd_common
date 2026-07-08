@@ -5,6 +5,7 @@
 
 #include "crypto.h"
 #include "console.h"
+#include "kd_http.h"
 #include "provisioning.h"
 #include "wifi.h"
 #include "ota.h"
@@ -30,6 +31,9 @@ void kd_common_init(void) {
 #ifdef CONFIG_KD_COMMON_CONSOLE_ENABLE
     console_init();
 #endif
+
+    // Shared HTTP client — must exist before any module that fetches
+    kd_http_init();
 
 #ifdef CONFIG_KD_COMMON_CRYPTO_ENABLE
     ret = crypto_init();

@@ -94,7 +94,9 @@ void kd_common_wifi_disconnect(void) {
 
 void kd_common_clear_wifi_credentials(void) {
     s_pending_restart = true;
+#ifdef CONFIG_KD_COMMON_API_ENABLE
     api_stop_server();
+#endif
     network_prov_mgr_reset_wifi_provisioning();
 }
 

@@ -15,6 +15,7 @@
 
 #include <cJSON.h>
 #include "kd_common.h"
+#include "kd_http.h"
 #include "wifi.h"
 
 #include <stdatomic.h>
@@ -31,9 +32,12 @@ static const char* TAG = "kd_ota";
 #define RETRY_DELAY_MS          5000
 #define RESPONSE_BUFFER_SIZE    512
 #define OTA_BUFFER_SIZE         4096
-#define OTA_TASK_STACK_SIZE     8192
-#define OTA_TASK_PRIORITY       5
+#define OTA_TASK_STACK_SIZE     12288
+#define OTA_TASK_PRIORITY       10
 #define MAX_BOOT_CHECK_RETRIES  3
+// Boot check waits out the post-IP rush (SNTP, TZ fetch, mDNS, WS mTLS
+// handshake) so its TLS handshake doesn't compete for internal RAM.
+#define BOOT_CHECK_DELAY_MS     30000
 
 //------------------------------------------------------------------------------
 // State
@@ -110,32 +114,29 @@ typedef enum {
 static check_result_t check_for_update(const char** out_url) {
     *out_url = NULL;
 
-    response_buffer_t response = {0};
+    response_buffer_t response = { 0 };
 
-    esp_http_client_config_t config = {
-        .url = FIRMWARE_ENDPOINT_URL,
-        .event_handler = http_event_handler,
-        .crt_bundle_attach = esp_crt_bundle_attach,
-        .user_data = &response
-    };
-
-    esp_http_client_handle_t client = esp_http_client_init(&config);
+    esp_http_client_handle_t client = kd_http_acquire(
+        FIRMWARE_ENDPOINT_URL, http_event_handler, &response, 20000);
     if (!client) {
-        ESP_LOGD(TAG, "Failed to init HTTP client");
+        ESP_LOGD(TAG, "Shared HTTP client unavailable");
         return CHECK_RESULT_NETWORK_ERROR;
     }
 
     const esp_app_desc_t* app_desc = esp_app_get_description();
-    esp_http_client_set_header(client, "x-firmware-project", app_desc->project_name);
-    esp_http_client_set_header(client, "x-firmware-version", app_desc->version);
+    kd_http_set_header("x-firmware-project", app_desc->project_name);
+    kd_http_set_header("x-firmware-version", app_desc->version);
 
 #ifdef FIRMWARE_VARIANT
-    esp_http_client_set_header(client, "x-firmware-variant", FIRMWARE_VARIANT);
+    kd_http_set_header("x-firmware-variant", FIRMWARE_VARIANT);
 #endif
 
     esp_err_t err = esp_http_client_perform(client);
     int status_code = esp_http_client_get_status_code(client);
-    esp_http_client_cleanup(client);
+    if (err != ESP_OK) {
+        kd_http_invalidate();  // connection state unknown, start fresh next time
+    }
+    kd_http_release();
 
     if (err != ESP_OK || status_code != 200) {
         ESP_LOGD(TAG, "HTTP request failed (status: %d)", status_code);
@@ -179,11 +180,19 @@ static check_result_t check_for_update(const char** out_url) {
 static bool perform_ota_update(const char* url) {
     ESP_LOGI(TAG, "Downloading update...");
 
+    // esp_https_ota owns its client internally; hold the app-wide HTTP lock
+    // so the download's TLS session doesn't overlap render/TZ fetches.
+    if (!kd_http_lock(60000)) {
+        ESP_LOGW(TAG, "HTTP client busy, deferring update");
+        return false;
+    }
+
     esp_http_client_config_t http_config = {
         .url = url,
         .buffer_size = OTA_BUFFER_SIZE,
         .buffer_size_tx = OTA_BUFFER_SIZE,
-        .crt_bundle_attach = esp_crt_bundle_attach
+        .crt_bundle_attach = esp_crt_bundle_attach,
+        .timeout_ms = 15000
     };
 
     esp_https_ota_config_t ota_config = {
@@ -191,6 +200,7 @@ static bool perform_ota_update(const char* url) {
     };
 
     esp_err_t err = esp_https_ota(&ota_config);
+    kd_http_unlock();
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Update failed: %s", esp_err_to_name(err));
         return false;
@@ -238,6 +248,10 @@ static bool perform_update_check(void) {
 
 static void ota_check_task(void* arg) {
     bool is_boot_check = (uintptr_t)arg != 0;
+
+    if (is_boot_check) {
+        vTaskDelay(pdMS_TO_TICKS(BOOT_CHECK_DELAY_MS));
+    }
 
     bool success = perform_update_check();
 

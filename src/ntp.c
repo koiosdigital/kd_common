@@ -36,7 +36,7 @@ static bool s_auto_tz_set_before_init = false;
 #define TZ_FETCH_URL            "http://ip-api.com/json"
 #define TZ_RESPONSE_BUFFER_SIZE 512
 #define TZ_FETCH_TASK_STACK     4096
-#define TZ_FETCH_TASK_PRIORITY  5
+#define TZ_FETCH_TASK_PRIORITY  10
 #define TZ_FETCH_MAX_RETRIES    2
 #define TZ_FETCH_RETRY_DELAY_MS 3000
 
@@ -172,8 +172,12 @@ static esp_err_t tz_http_event_handler(esp_http_client_event_t* evt) {
 }
 
 static bool fetch_timezone_from_api(void) {
-    tz_response_buffer_t response = {0};
+    tz_response_buffer_t response = { 0 };
 
+    // Deliberately NOT the shared kd_http client: this is plain HTTP (no TLS
+    // buffers to serialize) to a different host, and routing it through the
+    // shared client evicts the API's kept-alive TLS connection on every WiFi
+    // connect — the next render fetch then pays a full new handshake.
     esp_http_client_config_t config = {
         .url = TZ_FETCH_URL,
         .event_handler = tz_http_event_handler,
@@ -193,7 +197,7 @@ static bool fetch_timezone_from_api(void) {
 
     if (err != ESP_OK || status_code != 200) {
         ESP_LOGW(TAG, "TZ fetch failed (err=%s, status=%d)",
-                 esp_err_to_name(err), status_code);
+            esp_err_to_name(err), status_code);
         return false;
     }
 
@@ -252,7 +256,7 @@ static void spawn_tz_fetch_task(void) {
     }
 
     if (xTaskCreate(tz_fetch_task, "tz_fetch", TZ_FETCH_TASK_STACK,
-                    NULL, TZ_FETCH_TASK_PRIORITY, NULL) != pdPASS) {
+        NULL, TZ_FETCH_TASK_PRIORITY, NULL) != pdPASS) {
         ESP_LOGE(TAG, "Failed to create TZ fetch task");
         atomic_store(&s_tz_fetch_in_progress, false);
     }
