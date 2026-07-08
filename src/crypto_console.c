@@ -18,8 +18,6 @@
 #include <string.h>
 #include <stdlib.h>
 
-static const char* TAG = "crypto_console";
-
 // Chunked cert upload state
 #define CERT_UPLOAD_BUFFER_SIZE (16 * 1024)  // 16KB for cert chains
 static char* s_cert_upload_buffer = NULL;
