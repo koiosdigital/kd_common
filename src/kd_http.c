@@ -168,7 +168,7 @@ void kd_http_release(void) {
     drop_tracked_headers(true);
     s_event_cb = NULL;
     s_user_data = NULL;
-#if ESP_IDF_VERSION < ESP_IDF_VERSION_VAL(6, 0, 2)
+#if ESP_IDF_VERSION < ESP_IDF_VERSION_VAL(6, 0, 2) && !defined(KD_HTTP_CLIENT_CONNECT_FIX_BACKPORTED)
     // IDF v6.0.0/v6.0.1 regression: esp_http_client_connect() resets state to
     // CONNECTING before its own already-connected check, so every open() dials
     // a brand-new TLS connection while transport_ssl overwrites the previous
@@ -177,6 +177,8 @@ void kd_http_release(void) {
     // reuse is impossible on these versions, so close after every request to
     // reclaim the fd. Fixed upstream in v6.0.2 (the state change moved into
     // the async branch), where kept-alive reuse works and this must not run.
+    // KD_HTTP_CLIENT_CONNECT_FIX_BACKPORTED means the vendored
+    // components/esp_http_client carries that fix, so reuse works there too.
     if (s_client) {
         esp_http_client_close(s_client);
     }
