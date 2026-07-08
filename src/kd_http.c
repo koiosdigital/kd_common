@@ -4,6 +4,7 @@
 #include <esp_log.h>
 #include <esp_crt_bundle.h>
 #include <esp_timer.h>
+#include <esp_idf_version.h>
 
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
@@ -167,6 +168,19 @@ void kd_http_release(void) {
     drop_tracked_headers(true);
     s_event_cb = NULL;
     s_user_data = NULL;
+#if ESP_IDF_VERSION < ESP_IDF_VERSION_VAL(6, 0, 2)
+    // IDF v6.0.0/v6.0.1 regression: esp_http_client_connect() resets state to
+    // CONNECTING before its own already-connected check, so every open() dials
+    // a brand-new TLS connection while transport_ssl overwrites the previous
+    // esp_tls handle without closing it — leaking one socket fd (plus heap)
+    // per request until socket() fails ("Failed to create socket"). Keep-alive
+    // reuse is impossible on these versions, so close after every request to
+    // reclaim the fd. Fixed upstream in v6.0.2 (the state change moved into
+    // the async branch), where kept-alive reuse works and this must not run.
+    if (s_client) {
+        esp_http_client_close(s_client);
+    }
+#endif
     s_last_use_us = esp_timer_get_time();
     xSemaphoreGive(s_mutex);
 }
