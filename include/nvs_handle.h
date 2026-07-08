@@ -79,6 +79,11 @@ public:
         return nvs_get_i32(handle_, key, value);
     }
 
+    esp_err_t get_i64(const char* key, int64_t* value) {
+        if (!*this) return ESP_ERR_INVALID_STATE;
+        return nvs_get_i64(handle_, key, value);
+    }
+
     esp_err_t get_str(const char* key, char* buffer, size_t* len) {
         if (!*this) return ESP_ERR_INVALID_STATE;
         return nvs_get_str(handle_, key, buffer, len);
@@ -108,6 +113,11 @@ public:
     esp_err_t set_i32(const char* key, int32_t value) {
         if (!*this) return ESP_ERR_INVALID_STATE;
         return nvs_set_i32(handle_, key, value);
+    }
+
+    esp_err_t set_i64(const char* key, int64_t value) {
+        if (!*this) return ESP_ERR_INVALID_STATE;
+        return nvs_set_i64(handle_, key, value);
     }
 
     esp_err_t set_str(const char* key, const char* value) {

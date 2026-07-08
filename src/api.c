@@ -115,6 +115,15 @@ static void start_server(void) {
     config.max_uri_handlers = 200;
     config.uri_match_fn = httpd_uri_match_wildcard;
     config.stack_size = CONFIG_KD_COMMON_API_HTTPD_TASK_STACK_SIZE;
+    // Default cap (7) is too tight when a browser opens parallel asset fetches
+    // alongside the /api/ws upgrade — accept() starts returning EMFILE. Raise
+    // the per-server cap; LWIP_MAX_SOCKETS in sdkconfig must be at least
+    // (max_open_sockets + listening + other lwip clients) — we run with 16.
+    config.max_open_sockets = 10;
+    // When max_open_sockets is reached, close the LRU socket instead of
+    // returning EMFILE on the next accept. Browsers reopen idle keep-alives
+    // cheaply; WS clients stay because they're newest.
+    config.lru_purge_enable = true;
 
     esp_err_t ret = httpd_start(&s_kd_api_server, &config);
     if (ret != ESP_OK) {
