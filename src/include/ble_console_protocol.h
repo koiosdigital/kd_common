@@ -5,10 +5,15 @@
 #include <esp_err.h>
 
 // Protocol constants
-#define BLE_CONSOLE_MTU 512
+//
+// Frames ride inside a protocomm security2 session, whose AES-GCM encrypt
+// appends a 16-byte tag — and IDF >= v6.1 protocomm_nimble rejects responses
+// over BLE_ATT_ATTR_MAX_LEN (512) AFTER encryption. The plaintext frame must
+// therefore stay <= 496 so the ciphertext fits the cap.
+#define BLE_CONSOLE_MTU 496
 #define BLE_CONSOLE_FRAME_HEADER_SIZE 6   // magic + total_len(2) + chunk_idx + chunk_len(2)
 #define BLE_CONSOLE_FRAME_TRAILER_SIZE 2  // crc16(2)
-#define BLE_CONSOLE_CHUNK_PAYLOAD_SIZE (BLE_CONSOLE_MTU - BLE_CONSOLE_FRAME_HEADER_SIZE - BLE_CONSOLE_FRAME_TRAILER_SIZE) // 504 bytes
+#define BLE_CONSOLE_CHUNK_PAYLOAD_SIZE (BLE_CONSOLE_MTU - BLE_CONSOLE_FRAME_HEADER_SIZE - BLE_CONSOLE_FRAME_TRAILER_SIZE) // 488 bytes
 #define BLE_CONSOLE_MAX_PAYLOAD 16384  // 16KB for fullchain certs
 
 // Frame magic byte for data frames
