@@ -22,10 +22,6 @@
 #include "kd_api.h"
 #endif
 
-#ifdef CONFIG_KD_COMMON_OTA_ENABLE
-#include "kd_ota.h"
-#endif
-
 #ifdef __cplusplus
 extern "C" {
 #endif

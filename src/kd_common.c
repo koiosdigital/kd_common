@@ -8,7 +8,6 @@
 #include "kd_http.h"
 #include "provisioning.h"
 #include "wifi.h"
-#include "ota.h"
 #include "ntp.h"
 #include "embedded_tz_db.h"
 #include "kdmdns.h"
@@ -51,10 +50,6 @@ void kd_common_init(void) {
     // where GOT_IP fires before handlers are ready.
     ntp_init();
 
-#ifdef CONFIG_KD_COMMON_OTA_ENABLE
-    ota_init();
-#endif
-
     kdmdns_init();
 
 #ifdef CONFIG_KD_COMMON_API_ENABLE
@@ -76,16 +71,6 @@ void kd_common_reverse_bytes(uint8_t* data, size_t len) {
         data[len - i - 1] = temp;
     }
 }
-
-#ifdef CONFIG_KD_COMMON_OTA_ENABLE
-bool kd_common_ota_has_completed_boot_check(void) {
-    return ota_has_completed_boot_check();
-}
-
-void kd_common_check_ota(void) {
-    ota_check_now();
-}
-#endif
 
 #ifdef CONFIG_KD_COMMON_CRYPTO_ENABLE
 bool kd_common_crypto_will_generate_key(void) {
