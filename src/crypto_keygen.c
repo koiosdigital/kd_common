@@ -320,8 +320,8 @@ esp_err_t ensure_key_exists(void) {
         .result = ESP_FAIL,
     };
 
-    // Run all crypto operations on separate task with 16KB stack
-    xTaskCreate(crypto_setup_task, "crypto_setup", 16384, &task_params, 5, NULL);
+    // Run all crypto operations on separate task with 20KB stack
+    xTaskCreate(crypto_setup_task, "crypto_setup", 20000, &task_params, 5, NULL);
 
     vTaskDelay(pdMS_TO_TICKS(1000));
     while (xSemaphoreTake(g_keygen_mutex, pdMS_TO_TICKS(5000)) != pdTRUE) {
