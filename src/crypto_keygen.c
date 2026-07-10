@@ -181,7 +181,7 @@ static esp_err_t store_csr(psa_key_id_t key_id) {
     mbedtls_x509write_csr_set_ns_cert_type(&req, MBEDTLS_X509_NS_CERT_TYPE_SSL_CLIENT);
 
     char cn[128];
-    snprintf(cn, sizeof(cn), "CN=%s.iotdevices.koiosdigital.net", kd_common_get_device_name());
+    snprintf(cn, sizeof(cn), "CN=%s", kd_common_get_device_name());
     ret = mbedtls_x509write_csr_set_subject_name(&req, cn);
     if (ret != 0) {
         ESP_LOGE(TAG, "set_subject_name failed: %d", ret);
@@ -275,7 +275,7 @@ static void crypto_setup_task(void* pvParameter) {
 
     esp_ds_encrypt_params(encrypted, iv, ds_params, hmac);
     crypto_storage_store_ds_params(params->ds_key_block, (CRYPTO_KEY_SIZE / 32) - 1,
-                                   encrypted->c, ESP_DS_C_LEN, iv, ESP_DS_IV_LEN);
+        encrypted->c, ESP_DS_C_LEN, iv, ESP_DS_IV_LEN);
 
     heap_caps_free(encrypted);
     memset(ds_params, 0, sizeof(esp_ds_p_data_t));
