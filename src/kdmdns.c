@@ -7,12 +7,27 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
+
 static const char* TAG = "kdmdns";
 
-// Private state
+// Private state. s_lock serializes start/stop (WiFi event task) against
+// record updates (arbitrary tasks, e.g. the cloud WS task adding device_id):
+// without it, mdns_free() can tear the responder down between another task's
+// running-check and its mdns_service_txt_item_set() call.
+static SemaphoreHandle_t s_lock = NULL;
 static const char* s_model = NULL;
 static const char* s_type = NULL;
 static bool s_mdns_running = false;
+
+static void kdmdns_lock(void) {
+    if (s_lock) xSemaphoreTake(s_lock, portMAX_DELAY);
+}
+
+static void kdmdns_unlock(void) {
+    if (s_lock) xSemaphoreGive(s_lock);
+}
 
 // Custom TXT records added at runtime (e.g. device_id once the cloud session
 // is up). Cached here so they survive the mDNS teardown/rebuild that happens
@@ -80,13 +95,29 @@ static void stop_mdns(void) {
     ESP_LOGI(TAG, "mDNS stopped");
 }
 
+static void start_mdns_locked(void) {
+    kdmdns_lock();
+    start_mdns();
+    kdmdns_unlock();
+}
+
+static void stop_mdns_locked(void) {
+    kdmdns_lock();
+    stop_mdns();
+    kdmdns_unlock();
+}
+
 void kdmdns_init(void) {
-    wifi_on_connect(start_mdns);
-    wifi_on_disconnect(stop_mdns);
+    if (!s_lock) {
+        s_lock = xSemaphoreCreateMutex();
+    }
+    wifi_on_connect(start_mdns_locked);
+    wifi_on_disconnect(stop_mdns_locked);
     ESP_LOGI(TAG, "mDNS initialized (waiting for WiFi)");
 }
 
 void kdmdns_set_device_info(const char* model, const char* type) {
+    kdmdns_lock();
     s_model = model;
     s_type = type;
 
@@ -105,12 +136,15 @@ void kdmdns_set_device_info(const char* model, const char* type) {
             start_mdns();
         }
     }
+    kdmdns_unlock();
 }
 
 void kdmdns_add_svc_record(const char* service, const char* key, const char* value) {
     if (!service || !key || !value) {
         return;
     }
+
+    kdmdns_lock();
 
     // Update in place if this service+key is already cached
     custom_record_t* rec = NULL;
@@ -125,6 +159,7 @@ void kdmdns_add_svc_record(const char* service, const char* key, const char* val
     if (rec) {
         char* new_value = strdup(value);
         if (!new_value) {
+            kdmdns_unlock();
             return;
         }
         free(rec->value);
@@ -133,6 +168,7 @@ void kdmdns_add_svc_record(const char* service, const char* key, const char* val
     else {
         if (s_custom_record_count >= KDMDNS_MAX_CUSTOM_RECORDS) {
             ESP_LOGW(TAG, "Custom record table full, dropping %s/%s", service, key);
+            kdmdns_unlock();
             return;
         }
         rec = &s_custom_records[s_custom_record_count];
@@ -144,6 +180,7 @@ void kdmdns_add_svc_record(const char* service, const char* key, const char* val
             free(rec->key);
             free(rec->value);
             rec->service = rec->key = rec->value = NULL;
+            kdmdns_unlock();
             return;
         }
         s_custom_record_count++;
@@ -156,6 +193,8 @@ void kdmdns_add_svc_record(const char* service, const char* key, const char* val
                 service, key, esp_err_to_name(ret));
         }
     }
+
+    kdmdns_unlock();
 }
 
 const char* kdmdns_get_model(void) {
