@@ -132,6 +132,10 @@ void kd_common_set_device_info(const char* model, const char* type) {
     kdmdns_set_device_info(model, type);
 }
 
+void kd_common_mdns_add_svc_record(const char* service, const char* key, const char* value) {
+    kdmdns_add_svc_record(service, key, value);
+}
+
 // API functions
 #ifdef CONFIG_KD_COMMON_API_ENABLE
 void kd_common_api_register_handlers(kd_common_api_handler_registrar_fn registrar) {
