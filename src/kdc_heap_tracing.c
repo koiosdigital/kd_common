@@ -6,6 +6,10 @@
 
 #include <stdatomic.h>
 #include <stdint.h>
+#include <stdlib.h>
+
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 
 static const char* TAG = "kdc_heap";
 
@@ -44,9 +48,12 @@ void esp_heap_trace_alloc_hook(void* ptr, size_t size, uint32_t caps) {
     }
     if (atomic_load_explicit(&s_check_on_alloc, memory_order_relaxed)) {
         if (!heap_caps_check_integrity_all(false)) {
-            ESP_LOGE(TAG, "CORRUPTION after ALLOC %p size=%zu caps=0x%lx",
-                     ptr, size, (unsigned long)caps);
+            ESP_LOGE(TAG, "CORRUPTION after ALLOC %p size=%zu caps=0x%lx task=%s",
+                     ptr, size, (unsigned long)caps, pcTaskGetName(NULL));
             heap_caps_check_integrity_all(true);  // Print details
+            // Die here: this alloc is the closest observable event to the
+            // rogue write, so this panic backtrace is the best lead we get.
+            abort();
         }
     }
 }
@@ -57,8 +64,10 @@ void esp_heap_trace_free_hook(void* ptr) {
     }
     if (atomic_load_explicit(&s_check_on_alloc, memory_order_relaxed)) {
         if (!heap_caps_check_integrity_all(false)) {
-            ESP_LOGE(TAG, "CORRUPTION before FREE %p", ptr);
+            ESP_LOGE(TAG, "CORRUPTION before FREE %p task=%s",
+                     ptr, pcTaskGetName(NULL));
             heap_caps_check_integrity_all(true);  // Print details
+            abort();
         }
     }
 }
