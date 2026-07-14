@@ -35,7 +35,7 @@ static bool s_auto_tz_set_before_init = false;
 // Timezone fetch from IP geolocation API
 #define TZ_FETCH_URL            "http://ip-api.com/json"
 #define TZ_RESPONSE_BUFFER_SIZE 512
-#define TZ_FETCH_TASK_STACK     4096
+#define TZ_FETCH_TASK_STACK     8192
 #define TZ_FETCH_TASK_PRIORITY  10
 #define TZ_FETCH_MAX_RETRIES    2
 #define TZ_FETCH_RETRY_DELAY_MS 3000
