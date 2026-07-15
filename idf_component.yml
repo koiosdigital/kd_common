@@ -3,3 +3,6 @@ dependencies:
     version: "^1.2.2"
   espressif/cjson: "^1.7.19"
   espressif/mdns: ^1.9.1
+  # WIZnet W6100 SPI Ethernet driver (standard esp_eth framework). Only
+  # compiled into the image when CONFIG_KD_COMMON_ETH_ENABLE is set.
+  espressif/w6100: "^1.0.0"

@@ -31,6 +31,12 @@ void wifi_start(void);
 void wifi_restart(void);
 
 /**
+ * Permanently stop WiFi (used when Ethernet becomes the active uplink).
+ * Disconnects and stops the driver; no-op if WiFi was never started.
+ */
+void wifi_shutdown(void);
+
+/**
  * Register a callback to be invoked when WiFi gets an IP address.
  * Must be called after wifi_init() and before wifi_start().
  */

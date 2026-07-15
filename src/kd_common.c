@@ -3,11 +3,14 @@
 #include <nvs_flash.h>
 #include <esp_log.h>
 
+#include <esp_netif.h>
+
 #include "crypto.h"
 #include "console.h"
 #include "kd_http.h"
 #include "provisioning.h"
 #include "wifi.h"
+#include "eth.h"
 #include "ntp.h"
 #include "embedded_tz_db.h"
 #include "kdmdns.h"
@@ -41,13 +44,14 @@ void kd_common_init(void) {
     }
 #endif
 
-    // Phase 1: Initialize WiFi infrastructure (netif, central event handler)
-    // Does NOT start WiFi yet - modules register callbacks first.
-    wifi_init();
+    // Phase 1: one-time network stack init, shared by every interface.
+    esp_netif_init();
 
-    // Phase 2: Initialize modules that register WiFi connect/disconnect callbacks.
-    // All callbacks are registered BEFORE WiFi starts, preventing the race
-    // where GOT_IP fires before handlers are ready.
+    // Phase 2: Initialize modules that register network connect/disconnect
+    // callbacks. All callbacks are registered BEFORE any interface starts,
+    // preventing the race where GOT_IP fires before handlers are ready. These
+    // callbacks are interface-agnostic (see net.h), so they serve WiFi,
+    // Ethernet, and any future link identically.
     ntp_init();
 
     kdmdns_init();
@@ -56,11 +60,24 @@ void kd_common_init(void) {
     api_init();
 #endif
 
-    // Phase 3: Start provisioning (registers its own event handlers for
-    // PROV events and STA_START/DISCONNECTED for reconnect logic).
-    provisioning_init();
+    // Phase 3: Try Ethernet first. If it acquires an IP within the timeout,
+    // the device runs over Ethernet and we skip WiFi + BLE provisioning
+    // entirely. The driver is left running on timeout so a cable plugged in
+    // later still connects via the same net callbacks.
+    bool eth_active = false;
+#ifdef CONFIG_KD_COMMON_ETH_ENABLE
+    eth_active = eth_init(CONFIG_KD_COMMON_ETH_LINK_TIMEOUT_MS);
+#endif
 
-    // Phase 4: Start WiFi. All event handlers and callbacks are now registered.
+    if (eth_active) {
+        ESP_LOGI(TAG, "Ethernet active; WiFi and BLE provisioning disabled");
+        return;
+    }
+
+    // Phase 4: WiFi fallback. Bring up the WiFi driver, register provisioning's
+    // event handlers, then start WiFi — all callbacks are already registered.
+    wifi_init();
+    provisioning_init();
     wifi_start();
 }
 

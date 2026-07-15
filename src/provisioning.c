@@ -12,6 +12,7 @@
 #include <string.h>
 
 #include "kd_common.h"
+#include "net.h"
 #include "ble_console.h"
 #include "ble_console_protocol.h"
 
@@ -27,6 +28,10 @@ typedef struct {
     char srp_password[16];
     network_prov_security2_params_t srp_params;
 } provisioning_state_t;
+
+// Latched true once Ethernet takes over. Suppresses WiFi auto-reconnect and
+// prevents (re)starting BLE provisioning.
+static bool s_eth_active = false;
 
 static provisioning_state_t s_state = {
     .ever_connected = false,
@@ -112,7 +117,7 @@ static void provisioning_event_handler(void* arg, esp_event_base_t event_base,
         if (event_id == WIFI_EVENT_STA_START) {
             bool provisioned = false;
             network_prov_mgr_is_wifi_provisioned(&provisioned);
-            if (!provisioned && !s_state.provisioning_started) {
+            if (!provisioned && !s_state.provisioning_started && !s_eth_active) {
                 s_state.srp_password[0] = '\0';
                 ESP_LOGI(TAG, "WiFi started but not provisioned - starting BLE");
                 start_provisioning_internal();
@@ -121,8 +126,9 @@ static void provisioning_event_handler(void* arg, esp_event_base_t event_base,
         }
         else if (event_id == WIFI_EVENT_STA_DISCONNECTED) {
             s_state.is_wifi_connected = false;
-            // Reconnect unless waiting for new provisioning credentials
-            if (!s_state.prov_cred_failed) {
+            // Reconnect unless waiting for new provisioning credentials, or
+            // Ethernet has taken over (the disconnect is our own shutdown).
+            if (!s_state.prov_cred_failed && !s_eth_active) {
                 esp_wifi_connect();
             }
         }
@@ -198,8 +204,14 @@ char* kd_common_provisioning_get_srp_password(void) {
     return s_state.srp_password;
 }
 
+bool kd_common_is_network_connected(void) {
+    return net_is_connected();
+}
+
+// Back-compat alias. Historically "connected" meant WiFi STA had an IP; it now
+// reports connectivity over any interface (WiFi or Ethernet).
 bool kd_common_is_wifi_connected(void) {
-    return s_state.is_wifi_connected;
+    return net_is_connected();
 }
 
 void kd_common_start_provisioning(void) {
@@ -231,4 +243,13 @@ void provisioning_init(void) {
 
 void provisioning_start(void) {
     start_provisioning_internal();
+}
+
+void provisioning_shutdown_for_eth(void) {
+    s_eth_active = true;  // suppress WiFi reconnect and future prov starts
+    if (s_state.provisioning_started) {
+        ESP_LOGI(TAG, "Ethernet active: stopping BLE provisioning");
+        // Async: triggers NETWORK_PROV_END -> deinit (frees BT via scheme handler).
+        network_prov_mgr_stop_provisioning();
+    }
 }

@@ -110,4 +110,102 @@ menu "KD Common Configuration"
 
     endmenu
 
+    menu "Ethernet Configuration"
+
+        config KD_COMMON_ETH_ENABLE
+            bool "Enable SPI Ethernet"
+            default n
+            select ETH_ENABLED
+            select ETH_USE_SPI_ETHERNET
+            help
+                Bring up a SPI Ethernet controller at boot. When a link and
+                DHCP lease are acquired within the configured timeout, WiFi and
+                BLE provisioning are skipped entirely and the device runs over
+                Ethernet. Otherwise it falls back to WiFi/BLE provisioning.
+
+        choice KD_COMMON_ETH_DRIVER
+            prompt "Ethernet controller"
+            depends on KD_COMMON_ETH_ENABLE
+            default KD_COMMON_ETH_DRIVER_W6100
+            help
+                Select the SPI Ethernet controller fitted on the board.
+
+            config KD_COMMON_ETH_DRIVER_W6100
+                bool "WIZnet W6100"
+                help
+                    WIZnet W6100 SPI Ethernet controller (espressif/w6100
+                    managed component).
+
+        endchoice
+
+        choice KD_COMMON_ETH_SPI_HOST
+            prompt "SPI host"
+            depends on KD_COMMON_ETH_ENABLE
+            default KD_COMMON_ETH_SPI_HOST_3
+            help
+                SPI peripheral driving the Ethernet controller. Must not clash
+                with other SPI users on the board (e.g. the FPGA loader).
+
+            config KD_COMMON_ETH_SPI_HOST_2
+                bool "SPI2"
+
+            config KD_COMMON_ETH_SPI_HOST_3
+                bool "SPI3"
+
+        endchoice
+
+        config KD_COMMON_ETH_SPI_CLOCK_MHZ
+            int "SPI clock (MHz)"
+            depends on KD_COMMON_ETH_ENABLE
+            range 5 33
+            default 25
+            help
+                SPI clock speed for the Ethernet controller. The W6100
+                supports up to 33 MHz; reduce if signal integrity is poor.
+
+        config KD_COMMON_ETH_PIN_SCK
+            int "SCK GPIO"
+            depends on KD_COMMON_ETH_ENABLE
+            default 12
+
+        config KD_COMMON_ETH_PIN_MOSI
+            int "MOSI GPIO"
+            depends on KD_COMMON_ETH_ENABLE
+            default 11
+
+        config KD_COMMON_ETH_PIN_MISO
+            int "MISO GPIO"
+            depends on KD_COMMON_ETH_ENABLE
+            default 13
+
+        config KD_COMMON_ETH_PIN_CS
+            int "CS GPIO"
+            depends on KD_COMMON_ETH_ENABLE
+            default 10
+
+        config KD_COMMON_ETH_PIN_RST
+            int "Reset GPIO"
+            depends on KD_COMMON_ETH_ENABLE
+            default 9
+            help
+                Controller hardware reset line (active low). Set to -1 if the
+                reset pin is not wired to the ESP32.
+
+        config KD_COMMON_ETH_PIN_INT
+            int "Interrupt GPIO"
+            depends on KD_COMMON_ETH_ENABLE
+            default 14
+            help
+                Controller interrupt line. The driver runs in interrupt mode.
+
+        config KD_COMMON_ETH_LINK_TIMEOUT_MS
+            int "Link/DHCP wait timeout (ms)"
+            depends on KD_COMMON_ETH_ENABLE
+            default 8000
+            help
+                How long to wait for Ethernet link plus a DHCP lease at boot
+                before falling back to WiFi/BLE provisioning.
+
+    endmenu
+
 endmenu

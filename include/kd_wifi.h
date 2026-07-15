@@ -10,8 +10,12 @@ extern "C" {
 // WiFi connection functions
 void kd_common_wifi_disconnect(void);
 void kd_common_clear_wifi_credentials(void);
-bool kd_common_is_wifi_connected(void);
 esp_err_t kd_common_wifi_connect(const char* ssid, const char* password);
+
+// Connectivity state. Both report whether the device currently holds an IP on
+// ANY interface (WiFi or Ethernet); prefer the network-neutral name.
+bool kd_common_is_network_connected(void);
+bool kd_common_is_wifi_connected(void);  // back-compat alias
 
 // WiFi hostname functions (separate from device name)
 void kd_common_set_wifi_hostname(const char* hostname);

@@ -13,6 +13,7 @@
 
 #include "kd_common.h"
 #include "nvs_helper.h"
+#include "net.h"
 #include "api.h"
 #include "network_provisioning/manager.h"
 
@@ -39,13 +40,7 @@ static esp_netif_t* s_sta_netif = NULL;
 // Flag to track when we're clearing credentials and expect a restart
 static bool s_pending_restart = false;
 static bool s_event_handler_registered = false;
-
-// Centralized WiFi event callback system
-#define MAX_WIFI_CALLBACKS 8
-static wifi_connect_fn s_connect_cbs[MAX_WIFI_CALLBACKS];
-static wifi_disconnect_fn s_disconnect_cbs[MAX_WIFI_CALLBACKS];
-static size_t s_connect_cb_count = 0;
-static size_t s_disconnect_cb_count = 0;
+static bool s_started = false;  // true between wifi_start() and wifi_shutdown()
 
 // Forward declarations
 void wifi_restart(void);
@@ -63,29 +58,24 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t e
         }
     }
     else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
-        ESP_LOGI(TAG, "Got IP, dispatching to %u connect callbacks", (unsigned)s_connect_cb_count);
-        for (size_t i = 0; i < s_connect_cb_count; i++) {
-            if (s_connect_cbs[i]) s_connect_cbs[i]();
-        }
+        net_set_link_up(NET_IF_WIFI, true);
+        net_dispatch_connect();
     }
     else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
-        ESP_LOGD(TAG, "Disconnected, dispatching to %u disconnect callbacks", (unsigned)s_disconnect_cb_count);
-        for (size_t i = 0; i < s_disconnect_cb_count; i++) {
-            if (s_disconnect_cbs[i]) s_disconnect_cbs[i]();
-        }
+        net_set_link_up(NET_IF_WIFI, false);
+        net_dispatch_disconnect();
     }
 }
 
+// Thin compatibility wrappers: WiFi consumers still call wifi_on_connect(), but
+// the callback registry now lives in the interface-agnostic net hub so the same
+// callbacks fire for Ethernet (and future links) too.
 void wifi_on_connect(wifi_connect_fn cb) {
-    if (cb && s_connect_cb_count < MAX_WIFI_CALLBACKS) {
-        s_connect_cbs[s_connect_cb_count++] = cb;
-    }
+    net_on_connect(cb);
 }
 
 void wifi_on_disconnect(wifi_disconnect_fn cb) {
-    if (cb && s_disconnect_cb_count < MAX_WIFI_CALLBACKS) {
-        s_disconnect_cbs[s_disconnect_cb_count++] = cb;
-    }
+    net_on_disconnect(cb);
 }
 
 void kd_common_wifi_disconnect(void) {
@@ -140,6 +130,18 @@ void wifi_init(void) {
 void wifi_start(void) {
     esp_wifi_start();
     esp_wifi_connect();  // Connect directly (reconnects handled by event handler)
+    s_started = true;
+}
+
+void wifi_shutdown(void) {
+    if (!s_started) return;
+    s_started = false;
+    ESP_LOGI(TAG, "Shutting down WiFi (Ethernet is the active uplink)");
+    esp_wifi_disconnect();
+    esp_wifi_stop();
+    // Driver left initialized (not deinit'd) so the netif/glue teardown never
+    // races the event loop; STA is idle and issues no traffic. Provisioning's
+    // reconnect handler is separately suppressed by provisioning_shutdown_for_eth().
 }
 
 void wifi_restart(void) {
