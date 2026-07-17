@@ -98,14 +98,46 @@ static void got_ip_handler(void* arg, esp_event_base_t base, int32_t id, void* d
     }
 }
 
-bool eth_init(uint32_t link_wait_ms) {
+// Runs the DHCP wait and the WiFi-fallback decision off the init path so
+// kd_common_init() returns immediately instead of blocking for the timeout.
+static void eth_supervisor_task(void* arg) {
+    uint32_t link_wait_ms = (uint32_t)(uintptr_t)arg;
+
+    EventBits_t bits = xEventGroupWaitBits(s_eth_events, GOT_IP_BIT, pdFALSE, pdFALSE,
+        pdMS_TO_TICKS(link_wait_ms));
+    if (bits & GOT_IP_BIT) {
+        ESP_LOGI(TAG, "Ethernet active; WiFi and BLE provisioning not started");
+        vTaskDelete(NULL);
+        return;
+    }
+
+    // Timed out. Arm the hot-plug takeover first (so a link-up racing us tears
+    // the fallback back down via got_ip_handler), then re-check the bit in case
+    // Ethernet came up right at the boundary — avoids starting WiFi needlessly.
+    s_fallback_engaged = true;
+    if (xEventGroupGetBits(s_eth_events) & GOT_IP_BIT) {
+        ESP_LOGI(TAG, "Ethernet came up at the timeout boundary; skipping WiFi");
+        vTaskDelete(NULL);
+        return;
+    }
+
+    ESP_LOGW(TAG, "no Ethernet link/DHCP within %ums; starting WiFi/BLE fallback "
+                  "(Ethernet left running; will take over if it links later)",
+        (unsigned)link_wait_ms);
+    wifi_init();
+    provisioning_init();
+    wifi_start();
+    vTaskDelete(NULL);
+}
+
+esp_err_t eth_init(uint32_t link_wait_ms) {
     // Shared with WiFi; idempotent so calling before wifi_init() is fine.
     esp_netif_init();
 
     s_eth_events = xEventGroupCreate();
     if (!s_eth_events) {
         ESP_LOGE(TAG, "event group alloc failed");
-        return false;
+        return ESP_FAIL;
     }
 
     spi_bus_config_t buscfg = {
@@ -118,7 +150,7 @@ bool eth_init(uint32_t link_wait_ms) {
     esp_err_t err = spi_bus_initialize(ETH_SPI_HOST, &buscfg, SPI_DMA_CH_AUTO);
     if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
         ESP_LOGE(TAG, "spi_bus_initialize failed: %s", esp_err_to_name(err));
-        return false;
+        return ESP_FAIL;
     }
 
     spi_device_interface_config_t devcfg = {
@@ -142,14 +174,14 @@ bool eth_init(uint32_t link_wait_ms) {
 
     if (!mac || !phy) {
         ESP_LOGE(TAG, "failed to create W6100 MAC/PHY");
-        return false;
+        return ESP_FAIL;
     }
 
     esp_eth_config_t eth_config = ETH_DEFAULT_CONFIG(mac, phy);
     err = esp_eth_driver_install(&eth_config, &s_eth_handle);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "driver install failed: %s", esp_err_to_name(err));
-        return false;
+        return ESP_FAIL;
     }
 
     // SPI Ethernet chips have no factory MAC; assign the ESP's universal
@@ -163,12 +195,12 @@ bool eth_init(uint32_t link_wait_ms) {
     s_eth_netif = esp_netif_new(&netif_cfg);
     if (!s_eth_netif) {
         ESP_LOGE(TAG, "esp_netif_new failed");
-        return false;
+        return ESP_FAIL;
     }
     err = esp_netif_attach(s_eth_netif, esp_eth_new_netif_glue(s_eth_handle));
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "netif attach failed: %s", esp_err_to_name(err));
-        return false;
+        return ESP_FAIL;
     }
 
     // Set before the driver starts so it lands in the first DHCP DISCOVER,
@@ -181,26 +213,22 @@ bool eth_init(uint32_t link_wait_ms) {
     err = esp_eth_start(s_eth_handle);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "eth start failed: %s", esp_err_to_name(err));
-        return false;
+        return ESP_FAIL;
     }
 
-    ESP_LOGI(TAG, "W6100 started on SPI%d (CS %d, INT %d, RST %d); waiting up to %ums for DHCP",
+    ESP_LOGI(TAG, "W6100 started on SPI%d (CS %d, INT %d, RST %d); waiting up to %ums "
+                  "for DHCP in the background",
         ETH_SPI_HOST + 1, CONFIG_KD_COMMON_ETH_PIN_CS, CONFIG_KD_COMMON_ETH_PIN_INT,
         CONFIG_KD_COMMON_ETH_PIN_RST, (unsigned)link_wait_ms);
 
-    EventBits_t bits = xEventGroupWaitBits(s_eth_events, GOT_IP_BIT, pdFALSE, pdFALSE,
-        pdMS_TO_TICKS(link_wait_ms));
-    if (bits & GOT_IP_BIT) {
-        ESP_LOGI(TAG, "Ethernet active");
-        return true;
+    // Hand the DHCP wait and the WiFi-fallback decision to a background task so
+    // kd_common_init() returns immediately instead of blocking for the timeout.
+    if (xTaskCreate(eth_supervisor_task, "eth_super", 6144,
+            (void*)(uintptr_t)link_wait_ms, 5, NULL) != pdPASS) {
+        ESP_LOGE(TAG, "failed to spawn eth supervisor task");
+        return ESP_ERR_NO_MEM;
     }
-
-    // Arm the hot-plug takeover: from here the caller starts WiFi/BLE, so a
-    // later Ethernet GOT_IP should shut that fallback back down.
-    s_fallback_engaged = true;
-    ESP_LOGW(TAG, "no Ethernet link/DHCP within timeout; falling back to WiFi "
-                  "(Ethernet left running; will take over if it links later)");
-    return false;
+    return ESP_OK;
 }
 
 #endif // CONFIG_KD_COMMON_ETH_ENABLE

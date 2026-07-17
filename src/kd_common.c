@@ -60,19 +60,17 @@ void kd_common_init(void) {
     api_init();
 #endif
 
-    // Phase 3: Try Ethernet first. If it acquires an IP within the timeout,
-    // the device runs over Ethernet and we skip WiFi + BLE provisioning
-    // entirely. The driver is left running on timeout so a cable plugged in
-    // later still connects via the same net callbacks.
-    bool eth_active = false;
+    // Phase 3: Bring up Ethernet (non-blocking). eth_init() starts the W6100 and
+    // hands off to a background supervisor task that either lets Ethernet take
+    // over on link-up or starts the WiFi/BLE fallback after the link timeout —
+    // so this function never blocks on DHCP and boot continues immediately.
+    // Only if Ethernet setup fails outright do we start WiFi here directly.
 #ifdef CONFIG_KD_COMMON_ETH_ENABLE
-    eth_active = eth_init(CONFIG_KD_COMMON_ETH_LINK_TIMEOUT_MS);
-#endif
-
-    if (eth_active) {
-        ESP_LOGI(TAG, "Ethernet active; WiFi and BLE provisioning disabled");
+    if (eth_init(CONFIG_KD_COMMON_ETH_LINK_TIMEOUT_MS) == ESP_OK) {
         return;
     }
+    ESP_LOGW(TAG, "Ethernet init failed; starting WiFi immediately");
+#endif
 
     // Phase 4: WiFi fallback. Bring up the WiFi driver, register provisioning's
     // event handlers, then start WiFi — all callbacks are already registered.
