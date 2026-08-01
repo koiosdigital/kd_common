@@ -4,5 +4,13 @@ dependencies:
   espressif/cjson: "^1.7.19"
   espressif/mdns: ^1.9.1
   # WIZnet W6100 SPI Ethernet driver (standard esp_eth framework). Only
-  # compiled into the image when CONFIG_KD_COMMON_ETH_ENABLE is set.
-  espressif/w6100: "^1.0.0"
+  # pulled into the build when CONFIG_KD_COMMON_ETH_ENABLE is set — otherwise
+  # its sources (and wiznet_common's) would be compiled unconditionally and
+  # fail, because they #include esp_eth_mac.h/esp_eth_phy.h, which esp_eth only
+  # exposes when Ethernet is enabled in Kconfig (esp_eth is a config-only stub
+  # otherwise in IDF 6.1). Enabling KD_COMMON_ETH_ENABLE also selects
+  # ETH_USE_SPI_ETHERNET (see Kconfig.projbuild), which un-stubs esp_eth.
+  espressif/w6100:
+    version: "^1.0.0"
+    rules:
+      - if: "$CONFIG{KD_COMMON_ETH_ENABLE} == True"
