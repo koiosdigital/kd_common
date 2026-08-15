@@ -29,6 +29,10 @@ static httpd_handle_t s_kd_api_server = NULL;
 static api_handler_registrar_fn s_registrars[MAX_REGISTRARS] = { NULL };
 static size_t s_registrar_count = 0;
 
+// Hooks run just before the server is stopped, while the handle is still valid.
+static api_stop_hook_fn s_stop_hooks[MAX_REGISTRARS] = { NULL };
+static size_t s_stop_hook_count = 0;
+
 // ---------------------------------------------------------------------------
 // Pre-handler hook + wrapper registration
 // ---------------------------------------------------------------------------
@@ -150,6 +154,15 @@ static void start_server(void) {
 static void stop_server_internal(void) {
     if (s_kd_api_server == NULL) {
         return;
+    }
+
+    // Notify consumers that cached the handle so they can drop it / cancel
+    // timers while it is still valid. httpd_stop() frees the handle, so any
+    // deferred work (e.g. an esp_timer flush) still holding it would UAF.
+    for (size_t i = 0; i < s_stop_hook_count; i++) {
+        if (s_stop_hooks[i] != NULL) {
+            s_stop_hooks[i]();
+        }
     }
 
     httpd_stop(s_kd_api_server);
@@ -487,6 +500,17 @@ void api_register_handlers(api_handler_registrar_fn registrar) {
     if (s_kd_api_server != NULL) {
         registrar(s_kd_api_server);
     }
+}
+
+void api_register_stop_hook(api_stop_hook_fn hook) {
+    if (hook == NULL) {
+        return;
+    }
+    if (s_stop_hook_count >= MAX_REGISTRARS) {
+        ESP_LOGE(TAG, "Max stop hooks reached");
+        return;
+    }
+    s_stop_hooks[s_stop_hook_count++] = hook;
 }
 
 #endif // CONFIG_KD_COMMON_API_ENABLE

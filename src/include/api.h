@@ -24,6 +24,13 @@ void api_stop_server(void);
 // Callbacks are stored and re-invoked on reconnect.
 void api_register_handlers(api_handler_registrar_fn registrar);
 
+// Callback type invoked just before the server is stopped (handle still valid).
+typedef void (*api_stop_hook_fn)(void);
+
+// Register a hook to run before httpd_stop() frees the server handle. Lets
+// consumers that cached the handle drop it / cancel timers first.
+void api_register_stop_hook(api_stop_hook_fn hook);
+
 #ifdef __cplusplus
 }
 #endif

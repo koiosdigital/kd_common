@@ -156,4 +156,8 @@ void kd_common_mdns_add_svc_record(const char* service, const char* key, const c
 void kd_common_api_register_handlers(kd_common_api_handler_registrar_fn registrar) {
     api_register_handlers(registrar);
 }
+
+void kd_common_api_register_stop_hook(kd_common_api_stop_hook_fn hook) {
+    api_register_stop_hook(hook);
+}
 #endif
