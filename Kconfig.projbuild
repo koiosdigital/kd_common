@@ -16,6 +16,18 @@ menu "KD Common Configuration"
             CSR generation, and DS peripheral signing. Requires DS peripheral
             support on the target chip.
 
+    config KD_COMMON_RELEASE_BLE_WHEN_PROVISIONED
+        bool "Release BLE controller memory on an already-provisioned boot"
+        default n
+        help
+            When the device boots already provisioned, BLE provisioning never
+            starts, yet the BLE/BT controller keeps its reserved internal RAM.
+            Enabling this releases that memory back to the heap on such boots.
+
+            WARNING: this permanently disables runtime BLE re-provisioning until
+            the next reboot (esp_bt_mem_release cannot be undone). Only enable it
+            on devices that re-provision via a reboot (e.g. factory reset).
+
     config KD_COMMON_API_ENABLE
         bool "Enable HTTP API server"
         default y

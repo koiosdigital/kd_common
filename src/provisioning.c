@@ -4,6 +4,9 @@
 #include <esp_log.h>
 #include <esp_wifi.h>
 #include <esp_random.h>
+#if CONFIG_KD_COMMON_RELEASE_BLE_WHEN_PROVISIONED
+#include <esp_bt.h>
+#endif
 
 #include <network_provisioning/manager.h>
 #include <network_provisioning/scheme_ble.h>
@@ -122,6 +125,21 @@ static void provisioning_event_handler(void* arg, esp_event_base_t event_base,
                 ESP_LOGI(TAG, "WiFi started but not provisioned - starting BLE");
                 start_provisioning_internal();
             }
+#if CONFIG_KD_COMMON_RELEASE_BLE_WHEN_PROVISIONED
+            else if (provisioned) {
+                // Already provisioned: BLE (only used for provisioning) will not
+                // start this boot, so reclaim the BT controller's reserved
+                // internal RAM for the heap. One-shot and irreversible — runtime
+                // BLE re-provisioning is unavailable until the next reboot.
+                static bool bt_released = false;
+                if (!bt_released) {
+                    bt_released = true;
+                    esp_err_t rel = esp_bt_mem_release(ESP_BT_MODE_BTDM);
+                    ESP_LOGI(TAG, "Provisioned boot: released BT memory (%s)",
+                        esp_err_to_name(rel));
+                }
+            }
+#endif
             return;
         }
         else if (event_id == WIFI_EVENT_STA_DISCONNECTED) {
