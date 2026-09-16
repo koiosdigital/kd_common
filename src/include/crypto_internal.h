@@ -53,6 +53,9 @@ esp_err_t crypto_storage_get_ds_params(uint32_t* key_block_id, uint32_t* rsa_len
                                        uint8_t* cipher_c, size_t* cipher_c_len,
                                        uint8_t* iv, size_t* iv_len);
 esp_ds_data_ctx_t* crypto_storage_get_ds_ctx(void);
+// Erase cipher_c / iv / ds_key_id / rsa_len (used when keygen fails before the
+// eFuse burn so no stale params survive for a key that never existed).
+esp_err_t crypto_storage_clear_ds_params(void);
 
 // Internal functions - crypto_keygen.c
 esp_err_t ensure_key_exists(void);

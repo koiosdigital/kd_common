@@ -42,13 +42,16 @@ static bool s_auto_tz_set_before_init = false;
 
 static atomic_bool s_tz_fetch_in_progress = false;
 
-// Default configuration
-static ntp_config_t s_config = {
-    .auto_timezone = true,
-    .fetch_tz_on_boot = true,
-    .timezone = "UTC",
-    .ntp_server = "pool.ntp.org"
-};
+// Default configuration (macro so it can seed both the static and a reset)
+#define NTP_DEFAULT_CONFIG          \
+    {                               \
+        .auto_timezone = true,      \
+        .fetch_tz_on_boot = true,   \
+        .timezone = "UTC",          \
+        .ntp_server = "pool.ntp.org" \
+    }
+
+static ntp_config_t s_config = NTP_DEFAULT_CONFIG;
 
 static void load_config_from_nvs(void) {
     // Save pre-init settings
@@ -273,11 +276,9 @@ static void time_sync_callback(struct timeval* tv) {
 
     atomic_store(&s_synced, true);
 
-    time_t now = tv->tv_sec;
-    struct tm* tm_info = localtime(&now);
-    char time_str[32];
-    strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S %Z", tm_info);
-    ESP_LOGI(TAG, "Time synchronized: %s", time_str);
+    // This runs on the tcpip task: keep it to a plain integer log (no
+    // localtime()/strftime(), which touch TZ state and are not cheap).
+    ESP_LOGI(TAG, "Time synchronized: epoch %lld", (long long)tv->tv_sec);
 }
 
 static void start_sntp(void) {
@@ -294,6 +295,16 @@ static void start_sntp(void) {
     esp_sntp_set_time_sync_notification_cb(time_sync_callback);
     esp_sntp_set_sync_interval(3600 * 1000);  // Sync every hour
     esp_sntp_init();
+}
+
+// SNTP keeps a pointer to s_config.ntp_server; it must be stopped before
+// that buffer is rewritten, then restarted (with the new name) afterwards.
+static bool stop_sntp_if_running(void) {
+    if (esp_sntp_enabled()) {
+        esp_sntp_stop();
+        return true;
+    }
+    return false;
 }
 
 static void ntp_on_wifi_connect(void) {
@@ -349,14 +360,18 @@ ntp_config_t ntp_get_config(void) {
 void ntp_set_config(const ntp_config_t* config) {
     if (config == NULL) return;
 
+    bool was_running = stop_sntp_if_running();
+
     s_config = *config;
+    s_config.timezone[sizeof(s_config.timezone) - 1] = '\0';
+    s_config.ntp_server[sizeof(s_config.ntp_server) - 1] = '\0';
     save_config_to_nvs();
 
     // Re-apply timezone
     apply_timezone_local();
 
-    // Restart SNTP if server changed
-    if (esp_sntp_enabled()) {
+    // Restart SNTP (server may have changed)
+    if (was_running) {
         start_sntp();
     }
 }
@@ -411,17 +426,55 @@ const char* ntp_get_timezone(void) {
 void ntp_set_server(const char* server) {
     if (server == NULL) return;
 
+    bool was_running = stop_sntp_if_running();
+
     strncpy(s_config.ntp_server, server, sizeof(s_config.ntp_server) - 1);
     s_config.ntp_server[sizeof(s_config.ntp_server) - 1] = '\0';
 
     save_config_to_nvs();
 
-    if (esp_sntp_enabled()) {
+    if (was_running) {
         start_sntp();
     }
 }
 
 const char* ntp_get_server(void) {
     return s_config.ntp_server;
+}
+
+void kd_common_ntp_reset(void) {
+    bool was_running = stop_sntp_if_running();
+
+    // Erase the persisted configuration.
+    nvs_handle_t nvs_handle;
+    esp_err_t err = nvs_open(NTP_NVS_NAMESPACE, NVS_READWRITE, &nvs_handle);
+    if (err == ESP_OK) {
+        err = nvs_erase_all(nvs_handle);
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "Failed to erase NVS namespace '%s': %s", NTP_NVS_NAMESPACE, esp_err_to_name(err));
+        }
+        nvs_commit(nvs_handle);
+        nvs_close(nvs_handle);
+        ESP_LOGI(TAG, "NTP configuration erased from NVS");
+    }
+    else if (err != ESP_ERR_NVS_NOT_FOUND) {
+        ESP_LOGW(TAG, "Failed to open NVS namespace '%s': %s", NTP_NVS_NAMESPACE, esp_err_to_name(err));
+    }
+
+    // Back to defaults in RAM, keeping any app-level overrides made before
+    // ntp_init() (e.g. a UTC-only app disabling the TZ fetch), exactly as
+    // load_config_from_nvs() does.
+    bool saved_fetch_tz = s_config.fetch_tz_on_boot;
+    bool saved_auto_tz = s_config.auto_timezone;
+    const ntp_config_t defaults = NTP_DEFAULT_CONFIG;
+    s_config = defaults;
+    if (s_fetch_tz_set_before_init) s_config.fetch_tz_on_boot = saved_fetch_tz;
+    if (s_auto_tz_set_before_init) s_config.auto_timezone = saved_auto_tz;
+
+    apply_timezone_local();
+
+    if (was_running) {
+        start_sntp();
+    }
 }
 

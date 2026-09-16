@@ -38,7 +38,8 @@ static int cmd_get_csr(int argc, char** argv) {
         return 1;
     }
 
-    char* csr = (char*)malloc(csr_len);
+    // The CSR is stored as a blob without a terminator; reserve one byte.
+    char* csr = (char*)malloc(csr_len + 1);
     if (csr == NULL) {
         printf("[ERROR] Memory allocation failed\n");
         return 1;
@@ -50,6 +51,7 @@ static int cmd_get_csr(int argc, char** argv) {
         printf("[ERROR] Failed to read CSR\n");
         return 1;
     }
+    csr[csr_len] = '\0';
 
     // Output raw PEM directly
     printf("%s", csr);

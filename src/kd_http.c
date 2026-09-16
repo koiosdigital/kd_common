@@ -119,7 +119,15 @@ esp_http_client_handle_t kd_http_acquire(const char* url,
             return NULL;
         }
     } else {
-        esp_http_client_set_url(s_client, url);
+        esp_err_t err = esp_http_client_set_url(s_client, url);
+        if (err != ESP_OK) {
+            // The client now holds a half-updated URL; drop it rather than
+            // let the next holder send a request to the wrong place.
+            ESP_LOGE(TAG, "set_url failed for %s: %s", url, esp_err_to_name(err));
+            kd_http_invalidate();
+            xSemaphoreGive(s_mutex);
+            return NULL;
+        }
         // Previous holder may have changed the method
         esp_http_client_set_method(s_client, HTTP_METHOD_GET);
     }

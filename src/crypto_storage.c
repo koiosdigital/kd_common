@@ -242,6 +242,20 @@ esp_err_t crypto_storage_store_ds_params(uint32_t key_block_id, uint32_t rsa_len
         ESP_LOGE(TAG, "invalid iv length: %zu (expected %d)", iv_len, ESP_DS_IV_LEN);
         return ESP_ERR_INVALID_ARG;
     }
+    // key_block_id is stored as a u8 and later has 4 subtracted to form the
+    // HMAC key id; anything outside KEY0..KEY5 would underflow/overrun.
+    if (key_block_id < DS_KEY_BLOCK_MIN || key_block_id > DS_KEY_BLOCK_MAX) {
+        ESP_LOGE(TAG, "invalid ds key block: %u (valid %d-%d)",
+            (unsigned)key_block_id, DS_KEY_BLOCK_MIN, DS_KEY_BLOCK_MAX);
+        return ESP_ERR_INVALID_ARG;
+    }
+    // Only max-size keys are generated/consumed by this component; the DS
+    // length field is (bits / 32) - 1.
+    if (rsa_len != (CRYPTO_KEY_SIZE / 32) - 1) {
+        ESP_LOGE(TAG, "invalid rsa length field: %u (expected %u)",
+            (unsigned)rsa_len, (unsigned)((CRYPTO_KEY_SIZE / 32) - 1));
+        return ESP_ERR_INVALID_ARG;
+    }
 
     nvs_helper_t nvs = nvs_helper_open(CRYPTO_NVS_NAMESPACE, NVS_READWRITE);
     if (!nvs.valid) {
@@ -286,6 +300,27 @@ esp_err_t crypto_storage_store_ds_params(uint32_t key_block_id, uint32_t rsa_len
 
     nvs_helper_close(&nvs);
     return ESP_OK;
+}
+
+esp_err_t crypto_storage_clear_ds_params(void) {
+    nvs_helper_t nvs = nvs_helper_open(CRYPTO_NVS_NAMESPACE, NVS_READWRITE);
+    if (!nvs.valid) {
+        ESP_LOGE(TAG, "nvs open failed: %s", esp_err_to_name(nvs.open_err));
+        return nvs.open_err;
+    }
+
+    // Missing keys are fine: the goal is "none present afterwards".
+    nvs_helper_erase_key(&nvs, CRYPTO_NVS_KEY_CIPHERTEXT);
+    nvs_helper_erase_key(&nvs, CRYPTO_NVS_KEY_IV);
+    nvs_helper_erase_key(&nvs, CRYPTO_NVS_KEY_DS_KEY_ID);
+    nvs_helper_erase_key(&nvs, CRYPTO_NVS_KEY_RSA_LEN);
+
+    esp_err_t err = nvs_helper_commit(&nvs);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "nvs commit failed: %s", esp_err_to_name(err));
+    }
+    nvs_helper_close(&nvs);
+    return err;
 }
 
 esp_ds_data_ctx_t* crypto_storage_get_ds_ctx(void) {
@@ -333,6 +368,13 @@ esp_ds_data_ctx_t* crypto_storage_get_ds_ctx(void) {
     err = nvs_helper_get_u8(&nvs, CRYPTO_NVS_KEY_DS_KEY_ID, &ds_data_ctx->efuse_key_id);
     if (err != ESP_OK) {
         ESP_LOGD(TAG, "failed to get ds key id: %s", esp_err_to_name(err));
+        nvs_helper_close(&nvs);
+        free(ds_data_ctx->esp_ds_data);
+        free(ds_data_ctx);
+        return NULL;
+    }
+    if (ds_data_ctx->efuse_key_id < DS_KEY_BLOCK_MIN || ds_data_ctx->efuse_key_id > DS_KEY_BLOCK_MAX) {
+        ESP_LOGE(TAG, "stored ds key block %u out of range", (unsigned)ds_data_ctx->efuse_key_id);
         nvs_helper_close(&nvs);
         free(ds_data_ctx->esp_ds_data);
         free(ds_data_ctx);

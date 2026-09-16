@@ -17,12 +17,25 @@
 #include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/semphr.h"
 #include "sdkconfig.h"
 
 static const char* TAG = "kd_api";
 
 // Private state
 static httpd_handle_t s_kd_api_server = NULL;
+
+// Serializes start_server()/stop_server_internal() between the event-loop
+// task (WiFi connect/disconnect) and the deferred-stop task below. Never taken
+// on the httpd task itself (see stop_server_internal), so httpd_stop() can
+// always wait for that task to exit without a lock-order deadlock.
+static SemaphoreHandle_t s_server_lock = NULL;
+
+// Handle of the httpd worker task, captured on the first accepted connection
+// (open_fn runs on it) and again in the shim. Used to detect a stop request
+// issued from inside a request handler.
+static TaskHandle_t s_httpd_task = NULL;
+static volatile bool s_stop_deferred = false;
 
 // Max number of external handler registrars
 #define MAX_REGISTRARS 16
@@ -44,6 +57,13 @@ typedef struct {
     void*     user_ctx;
 } kd_api_wrap_t;
 
+// Static pool of wraps: one per registered URI, sized to max_uri_handlers.
+// The count is reset every time the server is (re)started, so reconnect
+// cycles reuse the same entries instead of leaking a malloc per URI.
+#define KD_API_MAX_URI_HANDLERS 200
+static kd_api_wrap_t s_wraps[KD_API_MAX_URI_HANDLERS];
+static size_t s_wrap_count = 0;
+
 static kd_common_api_pre_handler_fn s_pre_handler = NULL;
 
 #ifdef CONFIG_KD_COMMON_API_LOG_REQUESTS
@@ -63,6 +83,8 @@ static const char* method_name(int method) {
 
 static esp_err_t kd_api_shim_handler(httpd_req_t* req) {
     kd_api_wrap_t* w = (kd_api_wrap_t*)req->user_ctx;
+    // Belt-and-braces capture of the httpd task (open_fn already does this).
+    s_httpd_task = xTaskGetCurrentTaskHandle();
     // Run the pre-handler hook (e.g. to set CORS headers).
     if (s_pre_handler) s_pre_handler(req);
     // Restore caller's user_ctx before dispatch.
@@ -90,8 +112,13 @@ esp_err_t kd_common_api_register_uri_handler(httpd_handle_t server,
                                               const httpd_uri_t* uri) {
     if (!server || !uri || !uri->handler) return ESP_ERR_INVALID_ARG;
 
-    kd_api_wrap_t* w = (kd_api_wrap_t*)malloc(sizeof(kd_api_wrap_t));
-    if (!w) return ESP_ERR_NO_MEM;
+    if (s_wrap_count >= KD_API_MAX_URI_HANDLERS) {
+        ESP_LOGE(TAG, "URI wrap pool exhausted (%d) registering %s",
+                 KD_API_MAX_URI_HANDLERS, uri->uri);
+        return ESP_ERR_NO_MEM;
+    }
+
+    kd_api_wrap_t* w = &s_wraps[s_wrap_count];
     w->user_handler = uri->handler;
     w->user_ctx     = uri->user_ctx;
 
@@ -100,7 +127,7 @@ esp_err_t kd_common_api_register_uri_handler(httpd_handle_t server,
     wrapped.user_ctx = w;
 
     esp_err_t r = httpd_register_uri_handler(server, &wrapped);
-    if (r != ESP_OK) free(w);
+    if (r == ESP_OK) s_wrap_count++;
     return r;
 }
 
@@ -108,17 +135,39 @@ esp_err_t kd_common_api_register_uri_handler(httpd_handle_t server,
 static void register_internal_handlers(void);
 static void install_err_handlers(void);
 static void start_server(void);
-static void stop_server(void);
+static void stop_server_internal(void);
+
+// Runs on the httpd task for every accepted socket: record the task handle
+// so stop_server_internal() can tell when it is being called from a handler.
+static esp_err_t kd_api_open_fn(httpd_handle_t hd, int sockfd) {
+    (void)hd;
+    (void)sockfd;
+    s_httpd_task = xTaskGetCurrentTaskHandle();
+    return ESP_OK;
+}
+
+static void server_lock(void) {
+    if (s_server_lock) xSemaphoreTake(s_server_lock, portMAX_DELAY);
+}
+
+static void server_unlock(void) {
+    if (s_server_lock) xSemaphoreGive(s_server_lock);
+}
 
 static void start_server(void) {
+    server_lock();
     if (s_kd_api_server != NULL) {
+        server_unlock();
         return;
     }
 
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-    config.max_uri_handlers = 200;
+    config.max_uri_handlers = KD_API_MAX_URI_HANDLERS;
+    // Default (8) is tight once CORS + content headers are set on a response.
+    config.max_resp_headers = 16;
     config.uri_match_fn = httpd_uri_match_wildcard;
     config.stack_size = CONFIG_KD_COMMON_API_HTTPD_TASK_STACK_SIZE;
+    config.open_fn = kd_api_open_fn;
     // Default cap (7) is too tight when a browser opens parallel asset fetches
     // alongside the /api/ws upgrade — accept() starts returning EMFILE. Raise
     // the per-server cap; LWIP_MAX_SOCKETS in sdkconfig must be at least
@@ -129,13 +178,23 @@ static void start_server(void) {
     // cheaply; WS clients stay because they're newest.
     config.lru_purge_enable = true;
 
+    // Reset before the server task exists so an immediately-accepted
+    // connection's open_fn capture is not clobbered afterwards.
+    s_httpd_task = NULL;
+
     esp_err_t ret = httpd_start(&s_kd_api_server, &config);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to start httpd: %s", esp_err_to_name(ret));
+        s_kd_api_server = NULL;
+        server_unlock();
         return;
     }
 
     ESP_LOGI(TAG, "HTTP server started");
+
+    // Any wraps handed out to the previous server instance are dead with it;
+    // recycle the pool for this instance's registrations.
+    s_wrap_count = 0;
 
     // Error-code handlers (404/405/etc) so unmatched requests get CORS too.
     install_err_handlers();
@@ -149,10 +208,43 @@ static void start_server(void) {
             s_registrars[i](s_kd_api_server);
         }
     }
+    server_unlock();
+}
+
+// One-shot task used when a stop is requested from inside a request handler:
+// httpd_stop() blocks until the httpd task exits, which can never happen while
+// that task is the one calling it.
+static void deferred_stop_task(void* arg) {
+    (void)arg;
+    stop_server_internal();
+    s_stop_deferred = false;
+    vTaskDelete(NULL);
 }
 
 static void stop_server_internal(void) {
     if (s_kd_api_server == NULL) {
+        return;
+    }
+
+    // Called from a request handler (i.e. on the httpd task)? Defer to a
+    // helper task instead of deadlocking in httpd_stop(). This check is done
+    // before taking s_server_lock so the httpd task never blocks on it.
+    if (s_httpd_task != NULL && xTaskGetCurrentTaskHandle() == s_httpd_task) {
+        if (s_stop_deferred) {
+            return;
+        }
+        s_stop_deferred = true;
+        ESP_LOGW(TAG, "Stop requested from the httpd task; deferring");
+        if (xTaskCreate(deferred_stop_task, "kd_api_stop", 4096, NULL, 5, NULL) != pdPASS) {
+            ESP_LOGE(TAG, "Failed to create deferred stop task");
+            s_stop_deferred = false;
+        }
+        return;
+    }
+
+    server_lock();
+    if (s_kd_api_server == NULL) {
+        server_unlock();
         return;
     }
 
@@ -167,7 +259,9 @@ static void stop_server_internal(void) {
 
     httpd_stop(s_kd_api_server);
     s_kd_api_server = NULL;
+    s_httpd_task = NULL;
     ESP_LOGI(TAG, "HTTP server stopped");
+    server_unlock();
 }
 
 void api_stop_server(void) {
@@ -248,24 +342,33 @@ static esp_err_t system_config_get_handler(httpd_req_t* req) {
 }
 
 static esp_err_t system_config_post_handler(httpd_req_t* req) {
-    // Reject oversized requests
-    if (req->content_len > 1024) {
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Request body too large");
+    char content[1024];
+
+    // Reject oversized requests (leave room for the terminating NUL).
+    if (req->content_len > sizeof(content) - 1) {
+        httpd_resp_set_status(req, "413 Payload Too Large");
+        httpd_resp_set_type(req, "text/plain");
+        httpd_resp_send(req, "Request body too large", HTTPD_RESP_USE_STRLEN);
         return ESP_FAIL;
     }
 
-    char content[1024];
-    int ret = httpd_req_recv(req, content, sizeof(content) - 1);
-    if (ret <= 0) {
-        if (ret == HTTPD_SOCK_ERR_TIMEOUT) {
-            httpd_resp_send_408(req);
+    // httpd_req_recv() may return fewer bytes than requested; loop until the
+    // whole body has arrived.
+    size_t received = 0;
+    while (received < req->content_len) {
+        int ret = httpd_req_recv(req, content + received, req->content_len - received);
+        if (ret <= 0) {
+            if (ret == HTTPD_SOCK_ERR_TIMEOUT) {
+                httpd_resp_send_408(req);
+            }
+            else {
+                httpd_resp_send_500(req);
+            }
+            return ESP_FAIL;
         }
-        else {
-            httpd_resp_send_500(req);
-        }
-        return ESP_FAIL;
+        received += (size_t)ret;
     }
-    content[ret] = '\0';
+    content[received] = '\0';
 
     cJSON* json = cJSON_Parse(content);
     if (json == NULL) {
@@ -332,7 +435,12 @@ static esp_err_t time_zones_handler(httpd_req_t* req) {
     // httpd_resp_send_chunk() adds Transfer-Encoding itself; setting it here
     // too sent the header twice, which strict clients reject.
 
-    httpd_resp_send_chunk(req, "[", 1);
+    // Every send is checked: once the client is gone (or the socket errored)
+    // we bail out without the terminal chunk so httpd closes the connection
+    // rather than us spinning through the whole zone table.
+    if (httpd_resp_send_chunk(req, "[", 1) != ESP_OK) {
+        return ESP_FAIL;
+    }
 
     const int CHUNK_SIZE = 20;
     bool first_zone = true;
@@ -345,7 +453,6 @@ static esp_err_t time_zones_handler(httpd_req_t* req) {
 
         cJSON* chunk_array = cJSON_CreateArray();
         if (chunk_array == NULL) {
-            httpd_resp_send_chunk(req, NULL, 0);
             return ESP_FAIL;
         }
 
@@ -361,31 +468,41 @@ static esp_err_t time_zones_handler(httpd_req_t* req) {
         char* chunk_string = cJSON_PrintUnformatted(chunk_array);
         if (chunk_string == NULL) {
             cJSON_Delete(chunk_array);
-            httpd_resp_send_chunk(req, NULL, 0);
             return ESP_FAIL;
         }
 
+        esp_err_t send_err = ESP_OK;
         size_t chunk_len = strlen(chunk_string);
         if (chunk_len > 2) {
             chunk_string[chunk_len - 1] = '\0';
             char* content = chunk_string + 1;
 
             if (!first_zone) {
-                httpd_resp_send_chunk(req, ",", 1);
+                send_err = httpd_resp_send_chunk(req, ",", 1);
             }
-
-            httpd_resp_send_chunk(req, content, strlen(content));
+            if (send_err == ESP_OK) {
+                send_err = httpd_resp_send_chunk(req, content, strlen(content));
+            }
             first_zone = false;
         }
 
         free(chunk_string);
         cJSON_Delete(chunk_array);
 
+        if (send_err != ESP_OK) {
+            ESP_LOGW(TAG, "zonedb chunk send failed: %s", esp_err_to_name(send_err));
+            return ESP_FAIL;
+        }
+
         vTaskDelay(pdMS_TO_TICKS(10));
     }
 
-    httpd_resp_send_chunk(req, "]", 1);
-    httpd_resp_send_chunk(req, NULL, 0);
+    if (httpd_resp_send_chunk(req, "]", 1) != ESP_OK) {
+        return ESP_FAIL;
+    }
+    if (httpd_resp_send_chunk(req, NULL, 0) != ESP_OK) {
+        return ESP_FAIL;
+    }
 
     return ESP_OK;
 }
@@ -480,6 +597,9 @@ static void install_err_handlers(void) {
 }
 
 void api_init(void) {
+    if (s_server_lock == NULL) {
+        s_server_lock = xSemaphoreCreateMutex();
+    }
     wifi_on_connect(api_on_wifi_connect);
     wifi_on_disconnect(api_on_wifi_disconnect);
     ESP_LOGI(TAG, "API initialized (waiting for WiFi)");

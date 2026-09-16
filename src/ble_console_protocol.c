@@ -275,7 +275,7 @@ void ble_protocol_set_output(const uint8_t* data, size_t len) {
     s_proto.out_total_chunks = (uint8_t)((len + BLE_CONSOLE_CHUNK_PAYLOAD_SIZE - 1) / BLE_CONSOLE_CHUNK_PAYLOAD_SIZE);
     set_state(BLE_STATE_TRANSMITTING);
     ESP_LOGI(TAG, "output set: %u bytes, %u chunks", (unsigned)len, s_proto.out_total_chunks);
-    ESP_LOG_BUFFER_HEXDUMP(TAG, s_proto.buffer, s_proto.out_len, ESP_LOG_INFO);
+    ESP_LOG_BUFFER_HEXDUMP(TAG, s_proto.buffer, s_proto.out_len, ESP_LOG_VERBOSE);
 }
 
 bool ble_protocol_has_output(void) {

@@ -23,6 +23,11 @@ extern "C" {
 // Only defined when CONFIG_KD_COMMON_ETH_ENABLE is set.
 esp_err_t eth_init(uint32_t link_wait_ms);
 
+// Apply a new hostname to the Ethernet netif (takes effect on the next DHCP
+// exchange). No-op before eth_init(). Only defined when
+// CONFIG_KD_COMMON_ETH_ENABLE is set.
+void eth_set_hostname(const char* hostname);
+
 #ifdef __cplusplus
 }
 #endif

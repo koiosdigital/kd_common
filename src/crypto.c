@@ -262,6 +262,24 @@ esp_err_t kd_common_crypto_test_ds_signing(void) {
 
     // Prepare PKCS#1 v1.5 padded message for DS signing
     size_t rsa_bytes = ds_ctx->rsa_length_bits / 8;
+
+    // PKCS#1 v1.5 padding: 0x00 0x01 [0xFF...] 0x00 [DigestInfo] [hash]
+    static const uint8_t sha256_digest_info[] = {
+        0x30, 0x31, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01,
+        0x65, 0x03, 0x04, 0x02, 0x01, 0x05, 0x00, 0x04, 0x20
+    };
+    size_t di_len = sizeof(sha256_digest_info);
+
+    // A corrupt/short rsa_length_bits would make padding_len wrap and the
+    // memset below run off the end of the buffer.
+    if (rsa_bytes < 3 + di_len + hash_len) {
+        ESP_LOGE(TAG, "RSA length %zu bytes too small for PKCS#1 v1.5 SHA-256", rsa_bytes);
+        psa_destroy_key(psa_key_id);
+        free(ds_ctx->esp_ds_data);
+        free(ds_ctx);
+        return ESP_ERR_INVALID_SIZE;
+    }
+
     uint8_t* padded_msg = (uint8_t*)heap_caps_calloc(rsa_bytes, 1, MALLOC_CAP_DMA);
     uint8_t* signature = (uint8_t*)heap_caps_calloc(rsa_bytes, 1, MALLOC_CAP_DMA);
     if (padded_msg == NULL || signature == NULL) {
@@ -274,12 +292,6 @@ esp_err_t kd_common_crypto_test_ds_signing(void) {
         return ESP_ERR_NO_MEM;
     }
 
-    // PKCS#1 v1.5 padding: 0x00 0x01 [0xFF...] 0x00 [DigestInfo] [hash]
-    static const uint8_t sha256_digest_info[] = {
-        0x30, 0x31, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01,
-        0x65, 0x03, 0x04, 0x02, 0x01, 0x05, 0x00, 0x04, 0x20
-    };
-    size_t di_len = sizeof(sha256_digest_info);
     size_t padding_len = rsa_bytes - 3 - di_len - hash_len;
 
     padded_msg[0] = 0x00;

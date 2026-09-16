@@ -10,6 +10,12 @@ extern "C" {
 bool kd_common_ntp_is_synced(void);
 void kd_common_ntp_sync(void);
 
+// Factory reset for the NTP/timezone module: erases the component's NTP NVS
+// namespace ("ntp_cfg") and restores the in-RAM configuration to defaults
+// (honouring any pre-init overrides such as kd_common_set_fetch_tz_on_boot).
+// Safe to call from any task, including HTTP handlers.
+void kd_common_ntp_reset(void);
+
 // Timezone functions
 void kd_common_set_auto_timezone(bool enabled);
 bool kd_common_get_auto_timezone(void);
