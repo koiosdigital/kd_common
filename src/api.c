@@ -329,7 +329,8 @@ static esp_err_t time_zones_handler(httpd_req_t* req) {
     int total_zones = kd_common_get_timezone_count();
 
     httpd_resp_set_type(req, "application/json");
-    httpd_resp_set_hdr(req, "Transfer-Encoding", "chunked");
+    // httpd_resp_send_chunk() adds Transfer-Encoding itself; setting it here
+    // too sent the header twice, which strict clients reject.
 
     httpd_resp_send_chunk(req, "[", 1);
 
