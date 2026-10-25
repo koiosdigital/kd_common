@@ -28,8 +28,7 @@ SemaphoreHandle_t g_keygen_mutex = NULL;
 
 static void crypto_init_mutex(void) {
     if (g_keygen_mutex == NULL) {
-        g_keygen_mutex = xSemaphoreCreateBinary();
-        xSemaphoreGive(g_keygen_mutex);
+        g_keygen_mutex = xSemaphoreCreateMutex();
     }
 }
 

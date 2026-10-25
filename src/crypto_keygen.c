@@ -24,9 +24,14 @@
 #include <string.h>
 #include <stdlib.h>
 
+#include <mbedtls/platform_util.h>
+
 #include "kd_common.h"
 
+#include <nvs_flash.h>
+
 static const char* TAG = "kd_crypto_keygen";
+#define KEYGEN_MAX_RETRIES 3
 
 typedef struct {
     esp_efuse_block_t ds_key_block;
@@ -285,9 +290,8 @@ static void crypto_setup_task(void* pvParameter) {
     esp_efuse_write_key(params->ds_key_block, ESP_EFUSE_KEY_PURPOSE_HMAC_DOWN_DIGITAL_SIGNATURE, hmac, 32);
     esp_efuse_set_read_protect(params->ds_key_block);
 
-    // Securely wipe sensitive keying material
-    memset(hmac, 0, sizeof(hmac));
-    memset(iv, 0, sizeof(iv));
+    mbedtls_platform_zeroize(hmac, sizeof(hmac));
+    mbedtls_platform_zeroize(iv, sizeof(iv));
 
     psa_destroy_key(key_id);
     params->result = ESP_OK;
@@ -311,7 +315,13 @@ esp_err_t ensure_key_exists(void) {
 
     if (has_fuses) {
         ESP_LOGI(TAG, "skipping keygen, key already burnt to block: %d", (ds_key_block - 4));
-        //return kd_common_crypto_test_ds_signing();
+        if (kd_common_get_device_cert(NULL, NULL) == ESP_OK) {
+            esp_err_t ds_test = kd_common_crypto_test_ds_signing();
+            if (ds_test != ESP_OK) {
+                ESP_LOGE(TAG, "DS signing verification failed — identity may be broken");
+            }
+            return ds_test;
+        }
         return ESP_OK;
     }
 
@@ -329,10 +339,31 @@ esp_err_t ensure_key_exists(void) {
     }
 
     if (task_params.result != ESP_OK) {
-        esp_restart();
+        nvs_handle_t nvs;
+        uint8_t retries = 0;
+        if (nvs_open("kd_crypto", NVS_READWRITE, &nvs) == ESP_OK) {
+            nvs_get_u8(nvs, "kg_retries", &retries);
+            retries++;
+            nvs_set_u8(nvs, "kg_retries", retries);
+            nvs_commit(nvs);
+            nvs_close(nvs);
+        }
+        if (retries < KEYGEN_MAX_RETRIES) {
+            ESP_LOGE(TAG, "Keygen failed (attempt %d/%d), restarting", retries, KEYGEN_MAX_RETRIES);
+            esp_restart();
+        }
+        ESP_LOGE(TAG, "Keygen failed after %d attempts, entering degraded mode", KEYGEN_MAX_RETRIES);
+        return ESP_FAIL;
     }
 
-    //return kd_common_crypto_test_ds_signing();
+    // Clear retry counter on success
+    nvs_handle_t nvs;
+    if (nvs_open("kd_crypto", NVS_READWRITE, &nvs) == ESP_OK) {
+        nvs_erase_key(nvs, "kg_retries");
+        nvs_commit(nvs);
+        nvs_close(nvs);
+    }
+
     return ESP_OK;
 }
 
