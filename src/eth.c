@@ -231,4 +231,14 @@ esp_err_t eth_init(uint32_t link_wait_ms) {
     return ESP_OK;
 }
 
+void eth_set_hostname(const char* hostname) {
+    if (!s_eth_netif || !hostname || hostname[0] == '\0') {
+        return;
+    }
+    esp_err_t err = esp_netif_set_hostname(s_eth_netif, hostname);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "eth hostname update failed: %s", esp_err_to_name(err));
+    }
+}
+
 #endif // CONFIG_KD_COMMON_ETH_ENABLE

@@ -7,9 +7,13 @@
 
 #include <esp_console.h>
 #include <esp_app_desc.h>
+#include <esp_log.h>
+#include <soc/soc_caps.h>
 
+#if CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG
 #include "driver/usb_serial_jtag.h"
 #include "driver/usb_serial_jtag_vfs.h"
+#endif
 #include "argtable3/argtable3.h"
 
 #include "esp_heap_caps.h"
@@ -206,15 +210,26 @@ void console_init(void) {
     register_assert();
     register_get_version();
 
-#if SOC_USB_SERIAL_JTAG_SUPPORTED
+#if CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG
     if (!usb_serial_jtag_is_connected()) {
         return;
     }
     esp_console_dev_usb_serial_jtag_config_t hw_config = ESP_CONSOLE_DEV_USB_SERIAL_JTAG_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_console_new_repl_usb_serial_jtag(&hw_config, &repl_config, &repl));
+#elif CONFIG_ESP_CONSOLE_UART_DEFAULT || CONFIG_ESP_CONSOLE_UART_CUSTOM
+    // Targets/boards without USB-serial-JTAG: run the REPL on the console UART.
+    esp_console_dev_uart_config_t hw_config = ESP_CONSOLE_DEV_UART_CONFIG_DEFAULT();
+    ESP_ERROR_CHECK(esp_console_new_repl_uart(&hw_config, &repl_config, &repl));
 #endif
 
-    ESP_ERROR_CHECK(esp_console_start_repl(repl));
+    // Commands stay registered (BLE console dispatches them) even when no
+    // interactive REPL transport is available; only start one if created.
+    if (repl) {
+        ESP_ERROR_CHECK(esp_console_start_repl(repl));
+    }
+    else {
+        ESP_LOGW("kd_console", "No console REPL transport configured; commands available via BLE only");
+    }
 }
 
 #endif // CONFIG_KD_COMMON_CONSOLE_ENABLE

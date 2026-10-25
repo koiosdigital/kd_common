@@ -18,6 +18,14 @@ typedef void (*kd_common_api_handler_registrar_fn)(httpd_handle_t server);
 // Callbacks are stored and re-invoked on WiFi reconnect.
 void kd_common_api_register_handlers(kd_common_api_handler_registrar_fn registrar);
 
+// Callback invoked just before the HTTP server is stopped (e.g. on WiFi
+// disconnect), while the handle is still valid. Register consumers that cache
+// the httpd handle here so they can quiesce (cancel timers, drop the cached
+// handle) before httpd_stop() frees it — anything still dereferencing the
+// handle afterward is a use-after-free. Hooks run in registration order.
+typedef void (*kd_common_api_stop_hook_fn)(void);
+void kd_common_api_register_stop_hook(kd_common_api_stop_hook_fn hook);
+
 // ---------------------------------------------------------------------------
 // Pre-handler hook
 // ---------------------------------------------------------------------------

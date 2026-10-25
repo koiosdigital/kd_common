@@ -197,6 +197,25 @@ void kdmdns_add_svc_record(const char* service, const char* key, const char* val
     kdmdns_unlock();
 }
 
+void kdmdns_set_hostname(const char* hostname) {
+    if (!hostname || hostname[0] == '\0') {
+        return;
+    }
+    kdmdns_lock();
+    if (s_mdns_running) {
+        esp_err_t ret = mdns_hostname_set(hostname);
+        if (ret != ESP_OK) {
+            ESP_LOGW(TAG, "mdns hostname update failed: %s", esp_err_to_name(ret));
+        }
+        else {
+            ESP_LOGI(TAG, "mDNS hostname updated: %s", hostname);
+        }
+    }
+    // Not running: start_mdns() reads kd_common_get_wifi_hostname() on the
+    // next network connect, which already reflects the new value.
+    kdmdns_unlock();
+}
+
 const char* kdmdns_get_model(void) {
     return s_model;
 }

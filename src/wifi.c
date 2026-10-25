@@ -11,10 +11,15 @@
 #include <string.h>
 #include <stdio.h>
 
+#include <esp_netif.h>
+
 #include "kd_common.h"
 #include "nvs_helper.h"
 #include "net.h"
-#include "api.h"
+#include "kdmdns.h"
+#ifdef CONFIG_KD_COMMON_ETH_ENABLE
+#include "eth.h"
+#endif
 #include "network_provisioning/manager.h"
 
 #ifdef CONFIG_KD_COMMON_CONSOLE_ENABLE
@@ -46,6 +51,21 @@ static bool s_started = false;  // true between wifi_start() and wifi_shutdown()
 void wifi_restart(void);
 void wifi_start(void);
 
+// wifi_restart() stops/deinits/reinits the driver, which must never run on the
+// event-loop task (esp_wifi_stop/deinit synchronise with events dispatched by
+// that very task). The STA_STOP handler hands the work to this one-shot task.
+static void wifi_restart_task(void* arg) {
+    (void)arg;
+    wifi_restart();
+    vTaskDelete(NULL);
+}
+
+static void wifi_restart_deferred(void) {
+    if (xTaskCreate(wifi_restart_task, "wifi_restart", 4096, NULL, 5, NULL) != pdPASS) {
+        ESP_LOGE(TAG, "Failed to create WiFi restart task");
+    }
+}
+
 static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data) {
     (void)arg;
     (void)event_data;
@@ -54,7 +74,7 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t e
         if (s_pending_restart) {
             s_pending_restart = false;
             ESP_LOGI(TAG, "WiFi stopped after credential clear, restarting...");
-            wifi_restart();
+            wifi_restart_deferred();
         }
     }
     else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
@@ -83,11 +103,34 @@ void kd_common_wifi_disconnect(void) {
 }
 
 void kd_common_clear_wifi_credentials(void) {
+    // Wipe the stored STA config (this is just esp_wifi_restore()).
+    esp_err_t err = network_prov_mgr_reset_wifi_provisioning();
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "WiFi credential reset returned %s", esp_err_to_name(err));
+    }
+
+    // The HTTP server is NOT stopped here: this is commonly called from an
+    // HTTP handler, and the DISCONNECTED path below already tears the server
+    // down (off the httpd task) once the link drops.
+
+    if (!s_started) {
+        // Driver not running (never started, or Ethernet took over): nothing
+        // to stop, and no STA_STOP will arrive to drive a restart.
+        s_pending_restart = false;
+        ESP_LOGI(TAG, "WiFi credentials cleared (driver not running)");
+        return;
+    }
+
+    // Drop the link and stop the driver so WIFI_EVENT_STA_STOP fires; the
+    // event handler then restarts WiFi (on its own task), which lands in
+    // STA_START unprovisioned and kicks off BLE provisioning.
     s_pending_restart = true;
-#ifdef CONFIG_KD_COMMON_API_ENABLE
-    api_stop_server();
-#endif
-    network_prov_mgr_reset_wifi_provisioning();
+    esp_wifi_disconnect();
+    err = esp_wifi_stop();
+    if (err != ESP_OK) {
+        s_pending_restart = false;
+        ESP_LOGE(TAG, "esp_wifi_stop failed after credential clear: %s", esp_err_to_name(err));
+    }
 }
 
 // Initialize the WiFi driver (esp_wifi_init + mode/ps/hostname). Called from
@@ -145,6 +188,11 @@ void wifi_shutdown(void) {
 }
 
 void wifi_restart(void) {
+    if (!s_started) {
+        // Never started, or wifi_shutdown() handed the uplink to Ethernet.
+        ESP_LOGW(TAG, "wifi_restart ignored: WiFi is not the active uplink");
+        return;
+    }
     esp_wifi_stop();
     esp_wifi_deinit();
     wifi_driver_init();  // netif already initialized; just re-init the driver
@@ -178,7 +226,22 @@ void kd_common_set_wifi_hostname(const char* hostname) {
 
     nvs_helper_close(&nvs);
     s_hostname_cache.loaded = false;
-    wifi_restart();
+
+    // Reload the cache from NVS so every consumer sees the new name, then
+    // apply it live. No driver restart: the DHCP client picks the new name up
+    // on the next association/lease renewal, and mDNS is updated immediately.
+    const char* applied = kd_common_get_wifi_hostname();
+    if (s_sta_netif) {
+        err = esp_netif_set_hostname(s_sta_netif, applied);
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "esp_netif_set_hostname failed: %s", esp_err_to_name(err));
+        }
+    }
+#ifdef CONFIG_KD_COMMON_ETH_ENABLE
+    eth_set_hostname(applied);
+#endif
+    kdmdns_set_hostname(applied);
+    ESP_LOGI(TAG, "Hostname set to %s", applied);
 }
 
 char* kd_common_get_wifi_hostname(void) {
@@ -225,11 +288,16 @@ esp_err_t kd_common_wifi_connect(const char* ssid, const char* password) {
         return ESP_ERR_INVALID_ARG;
     }
 
+    // The driver treats ssid/password as length-bounded byte arrays, not
+    // C strings: a full 32-byte SSID / 64-byte PSK is legal and need not be
+    // NUL-terminated, so copy with strnlen instead of leaving a byte spare.
     wifi_config_t wifi_cfg = { 0 };
-    strncpy((char*)wifi_cfg.sta.ssid, ssid, sizeof(wifi_cfg.sta.ssid) - 1);
+    size_t ssid_len = strnlen(ssid, sizeof(wifi_cfg.sta.ssid));
+    memcpy(wifi_cfg.sta.ssid, ssid, ssid_len);
 
-    if (password && strlen(password) > 0) {
-        strncpy((char*)wifi_cfg.sta.password, password, sizeof(wifi_cfg.sta.password) - 1);
+    if (password && password[0] != '\0') {
+        size_t pw_len = strnlen(password, sizeof(wifi_cfg.sta.password));
+        memcpy(wifi_cfg.sta.password, password, pw_len);
     }
 
     esp_err_t err = esp_wifi_set_config(WIFI_IF_STA, &wifi_cfg);

@@ -76,7 +76,7 @@ static void prepare_response(Kd__V1__ConsoleMessage* resp) {
 
     kd__v1__console_message__pack(resp, out_buffer);
 
-    ESP_LOG_BUFFER_HEXDUMP(TAG, out_buffer, payload_len, ESP_LOG_INFO);
+    ESP_LOG_BUFFER_HEXDUMP(TAG, out_buffer, payload_len, ESP_LOG_VERBOSE);
     ble_protocol_set_output(out_buffer, payload_len);
     free(out_buffer);
     ESP_LOGI(TAG, "response ready: %u bytes", (unsigned)payload_len);
