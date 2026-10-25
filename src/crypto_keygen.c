@@ -19,6 +19,9 @@
 #include <nvs.h>
 
 #include "psa/crypto.h"
+#ifdef CONFIG_MBEDTLS_HARDWARE_RSA_DS_PERIPHERAL
+#include "psa_crypto_driver_esp_rsa_ds.h"
+#endif
 #include "mbedtls/x509_csr.h"
 #include "mbedtls/asn1.h"
 #include "mbedtls/bignum.h"
@@ -542,6 +545,104 @@ esp_err_t ensure_key_exists(void) {
     }
 
     return ESP_OK;
+}
+
+// ============================================
+// Cert renewal: regenerate CSR from DS key
+// ============================================
+esp_err_t kd_common_crypto_regenerate_csr(void) {
+#ifndef CONFIG_MBEDTLS_HARDWARE_RSA_DS_PERIPHERAL
+    ESP_LOGE(TAG, "DS peripheral not enabled — cannot regenerate CSR");
+    return ESP_ERR_NOT_SUPPORTED;
+#else
+    esp_ds_data_ctx_t* ds_ctx = kd_common_crypto_get_ctx();
+    if (ds_ctx == NULL) {
+        ESP_LOGE(TAG, "No DS context — key not provisioned");
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    esp_err_t ret = ESP_FAIL;
+    psa_key_id_t ds_key_id = 0;
+    mbedtls_x509write_csr req;
+    mbedtls_pk_context pk;
+    uint8_t* csr_buffer = NULL;
+
+    mbedtls_x509write_csr_init(&req);
+    mbedtls_pk_init(&pk);
+
+    // Import the DS peripheral key as a PSA opaque key
+    psa_key_attributes_t attr = PSA_KEY_ATTRIBUTES_INIT;
+    psa_set_key_type(&attr, PSA_KEY_TYPE_RSA_KEY_PAIR);
+    psa_set_key_bits(&attr, ds_ctx->rsa_length_bits);
+    psa_set_key_usage_flags(&attr, PSA_KEY_USAGE_SIGN_HASH);
+    psa_set_key_algorithm(&attr, PSA_ALG_RSA_PKCS1V15_SIGN(PSA_ALG_SHA_256));
+    psa_set_key_lifetime(&attr, PSA_KEY_LIFETIME_ESP_RSA_DS);
+
+    psa_status_t status = psa_import_key(&attr,
+        (const uint8_t*)ds_ctx, sizeof(esp_ds_data_ctx_t), &ds_key_id);
+    psa_reset_key_attributes(&attr);
+
+    if (status != PSA_SUCCESS) {
+        ESP_LOGE(TAG, "Failed to import DS key to PSA: %d", status);
+        goto cleanup;
+    }
+
+    // Wrap the PSA key in an mbedtls PK context for CSR signing
+    int mbret = mbedtls_pk_wrap_psa(&pk, ds_key_id);
+    if (mbret != 0) {
+        ESP_LOGE(TAG, "mbedtls_pk_wrap_psa failed: -0x%04X", -mbret);
+        goto cleanup;
+    }
+
+    // Build the CSR (same parameters as initial provisioning)
+    mbedtls_x509write_csr_set_md_alg(&req, MBEDTLS_MD_SHA256);
+    mbedtls_x509write_csr_set_key_usage(&req, MBEDTLS_X509_KU_DIGITAL_SIGNATURE);
+    mbedtls_x509write_csr_set_ns_cert_type(&req, MBEDTLS_X509_NS_CERT_TYPE_SSL_CLIENT);
+
+    char cn[128];
+    snprintf(cn, sizeof(cn), "CN=%s", kd_common_get_device_name());
+    mbret = mbedtls_x509write_csr_set_subject_name(&req, cn);
+    if (mbret != 0) {
+        ESP_LOGE(TAG, "set_subject_name failed: %d", mbret);
+        goto cleanup;
+    }
+
+    mbedtls_x509write_csr_set_key(&req, &pk);
+
+    csr_buffer = (uint8_t*)malloc(CRYPTO_PEM_BUFFER_SIZE);
+    if (csr_buffer == NULL) {
+        ESP_LOGE(TAG, "malloc failed for CSR buffer");
+        goto cleanup;
+    }
+
+    mbret = mbedtls_x509write_csr_pem(&req, csr_buffer, CRYPTO_PEM_BUFFER_SIZE);
+    if (mbret != 0) {
+        ESP_LOGE(TAG, "csr_pem failed: %d", mbret);
+        goto cleanup;
+    }
+
+    // Store the new CSR (overwrites the old one)
+    ret = crypto_storage_store_csr(csr_buffer, strlen((const char*)csr_buffer));
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to store regenerated CSR");
+        goto cleanup;
+    }
+
+    ESP_LOGI(TAG, "CSR regenerated from DS key for cert renewal");
+    ret = ESP_OK;
+
+cleanup:
+    mbedtls_x509write_csr_free(&req);
+    mbedtls_pk_free(&pk);
+    free(csr_buffer);
+    if (ds_key_id != 0) {
+        psa_destroy_key(ds_key_id);
+    }
+    mbedtls_platform_zeroize(ds_ctx->esp_ds_data, sizeof(esp_ds_data_t));
+    free(ds_ctx->esp_ds_data);
+    free(ds_ctx);
+    return ret;
+#endif
 }
 
 #endif // CONFIG_KD_COMMON_CRYPTO_ENABLE

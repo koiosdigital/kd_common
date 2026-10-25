@@ -325,6 +325,17 @@ static int cmd_check_key_blocks(int argc, char** argv) {
     return 0;
 }
 
+static int cmd_renew_csr(int argc, char** argv) {
+    printf("Regenerating CSR from DS peripheral key...\n");
+    esp_err_t err = kd_common_crypto_regenerate_csr();
+    if (err == ESP_OK) {
+        printf("CSR regenerated from DS key. Send it to the server for signing.\n");
+    } else {
+        printf("[ERROR] CSR regeneration failed: %s\n", esp_err_to_name(err));
+    }
+    return (err == ESP_OK) ? 0 : 1;
+}
+
 void crypto_console_init(void) {
     kd_console_register_cmd("crypto_status", "Get the current state of the crypto module", cmd_crypto_status);
     kd_console_register_cmd("get_csr", "Get the CSR (raw PEM output)", cmd_get_csr);
@@ -347,6 +358,8 @@ void crypto_console_init(void) {
     kd_console_register_cmd_with_args("set_ds_key_block", "Set the eFuse block for DS key storage (4-9 = KEY0-KEY5)", cmd_set_ds_key_block, &s_set_ds_key_block_args);
 
     kd_console_register_cmd("check_key_blocks", "Show status of all eFuse key blocks (KEY0-KEY5)", cmd_check_key_blocks);
+
+    kd_console_register_cmd("renew_csr", "Regenerate CSR from DS key for cert renewal", cmd_renew_csr);
 }
 
 #endif // CONFIG_KD_COMMON_CONSOLE_ENABLE

@@ -43,6 +43,7 @@ extern "C" {
     CryptoState_t kd_common_crypto_get_state(void);
     bool kd_common_crypto_will_generate_key(void);
     esp_err_t kd_common_crypto_test_ds_signing(void);  // Debug: test DS peripheral signing
+    esp_err_t kd_common_crypto_regenerate_csr(void);  // Generate new CSR from DS key for cert renewal
 
 #ifdef __cplusplus
 }
