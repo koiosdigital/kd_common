@@ -23,7 +23,11 @@
 #include "psa_crypto_driver_esp_rsa_ds.h"
 #endif
 #include "mbedtls/x509_csr.h"
+#include "mbedtls/x509_crt.h"
 #include "mbedtls/asn1.h"
+#include "mbedtls/asn1write.h"
+#include "mbedtls/oid.h"
+#include "mbedtls/pem.h"
 #include "mbedtls/bignum.h"
 #include "mbedtls/platform_util.h"
 
@@ -563,81 +567,195 @@ esp_err_t kd_common_crypto_regenerate_csr(void) {
 
     esp_err_t ret = ESP_FAIL;
     psa_key_id_t ds_key_id = 0;
-    mbedtls_x509write_csr req;
-    mbedtls_pk_context pk;
-    uint8_t* csr_buffer = NULL;
+    mbedtls_x509_crt crt;
+    char* cert_pem = NULL;
+    uint8_t* cri_buf = NULL;
+    uint8_t* der_buf = NULL;
+    uint8_t* sig = NULL;
+    uint8_t* pem = NULL;
+    int mbret;
 
-    mbedtls_x509write_csr_init(&req);
-    mbedtls_pk_init(&pk);
+    mbedtls_x509_crt_init(&crt);
 
-    // Import the DS peripheral key as a PSA opaque key
+    // The DS peripheral never releases the private key and its PSA driver has
+    // no public-key export either, so mbedtls' CSR writer (which embeds the
+    // public key) cannot run on the DS key. The public half comes from the
+    // device certificate and the PKCS#10 request is assembled here; only the
+    // signature goes through the DS key.
+    size_t cert_len = 0;
+    if (crypto_storage_get_device_cert(NULL, &cert_len) != ESP_OK || cert_len == 0) {
+        ESP_LOGE(TAG, "No device certificate to take the public key from");
+        ret = ESP_ERR_INVALID_STATE;
+        goto cleanup;
+    }
+    cert_pem = malloc(cert_len + 1);
+    if (cert_pem == NULL) {
+        ret = ESP_ERR_NO_MEM;
+        goto cleanup;
+    }
+    if (crypto_storage_get_device_cert(cert_pem, &cert_len) != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to read device certificate");
+        goto cleanup;
+    }
+    cert_pem[cert_len] = '\0';
+    mbret = mbedtls_x509_crt_parse(&crt, (const uint8_t*)cert_pem, strlen(cert_pem) + 1);
+    if (mbret != 0) {
+        ESP_LOGE(TAG, "Device certificate parse failed: -0x%04X", (unsigned)-mbret);
+        goto cleanup;
+    }
+    if (!mbedtls_pk_can_do_psa(&crt.pk, PSA_ALG_RSA_PKCS1V15_SIGN(PSA_ALG_SHA_256),
+                               PSA_KEY_USAGE_VERIFY_HASH) ||
+        mbedtls_pk_get_bitlen(&crt.pk) != ds_ctx->rsa_length_bits) {
+        ESP_LOGE(TAG, "Device certificate key (%u bits) does not match DS key (%u bits)",
+                 (unsigned)mbedtls_pk_get_bitlen(&crt.pk), ds_ctx->rsa_length_bits);
+        goto cleanup;
+    }
+
     psa_key_attributes_t attr = PSA_KEY_ATTRIBUTES_INIT;
     psa_set_key_type(&attr, PSA_KEY_TYPE_RSA_KEY_PAIR);
     psa_set_key_bits(&attr, ds_ctx->rsa_length_bits);
     psa_set_key_usage_flags(&attr, PSA_KEY_USAGE_SIGN_HASH);
-    psa_set_key_algorithm(&attr, PSA_ALG_RSA_PKCS1V15_SIGN(PSA_ALG_SHA_256));
+    psa_set_key_algorithm(&attr, PSA_ALG_RSA_PKCS1V15_SIGN(PSA_ALG_ANY_HASH));
     psa_set_key_lifetime(&attr, PSA_KEY_LIFETIME_ESP_RSA_DS);
 
     psa_status_t status = psa_import_key(&attr,
         (const uint8_t*)ds_ctx, sizeof(esp_ds_data_ctx_t), &ds_key_id);
     psa_reset_key_attributes(&attr);
-
     if (status != PSA_SUCCESS) {
-        ESP_LOGE(TAG, "Failed to import DS key to PSA: %d", status);
+        ESP_LOGE(TAG, "Failed to import DS key to PSA: %d (efuse=%u bits=%u rsa_len=%d)",
+                 status, ds_ctx->efuse_key_id, ds_ctx->rsa_length_bits,
+                 ds_ctx->esp_ds_data->rsa_length);
         goto cleanup;
     }
 
-    // Wrap the PSA key in an mbedtls PK context for CSR signing
-    int mbret = mbedtls_pk_wrap_psa(&pk, ds_key_id);
+    const size_t rsa_bytes = ds_ctx->rsa_length_bits / 8;
+    const size_t cri_size = rsa_bytes + 256;
+    const size_t der_size = 2 * rsa_bytes + 320;
+    cri_buf = malloc(cri_size);
+    der_buf = malloc(der_size);
+    sig = malloc(rsa_bytes);
+    if (cri_buf == NULL || der_buf == NULL || sig == NULL) {
+        ret = ESP_ERR_NO_MEM;
+        goto cleanup;
+    }
+
+#define CSR_ASN1_ADD(total, expr) \
+    do { \
+        int _r = (expr); \
+        if (_r < 0) { \
+            ESP_LOGE(TAG, "CSR ASN.1 write failed: -0x%04X", (unsigned)-_r); \
+            goto cleanup; \
+        } \
+        (total) += (size_t)_r; \
+    } while (0)
+
+    // CertificationRequestInfo ::= SEQUENCE { version, subject, subjectPKInfo,
+    // attributes [0] } — written back to front, as mbedtls does.
+    unsigned char* c = cri_buf + cri_size;
+    size_t cri_len = 0;
+    CSR_ASN1_ADD(cri_len, mbedtls_asn1_write_len(&c, cri_buf, 0));
+    CSR_ASN1_ADD(cri_len, mbedtls_asn1_write_tag(&c, cri_buf,
+        MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_CONTEXT_SPECIFIC));
+
+    mbret = mbedtls_pk_write_pubkey_der(&crt.pk, cri_buf, (size_t)(c - cri_buf));
+    if (mbret < 0) {
+        ESP_LOGE(TAG, "Public key write failed: -0x%04X", (unsigned)-mbret);
+        goto cleanup;
+    }
+    c -= mbret;
+    cri_len += (size_t)mbret;
+
+    const char* cn = kd_common_get_device_name();
+    size_t name_len = 0;
+    CSR_ASN1_ADD(name_len, mbedtls_asn1_write_tagged_string(&c, cri_buf,
+        MBEDTLS_ASN1_UTF8_STRING, cn, strlen(cn)));
+    CSR_ASN1_ADD(name_len, mbedtls_asn1_write_oid(&c, cri_buf,
+        MBEDTLS_OID_AT_CN, MBEDTLS_OID_SIZE(MBEDTLS_OID_AT_CN)));
+    CSR_ASN1_ADD(name_len, mbedtls_asn1_write_len(&c, cri_buf, name_len));
+    CSR_ASN1_ADD(name_len, mbedtls_asn1_write_tag(&c, cri_buf,
+        MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_SEQUENCE));
+    CSR_ASN1_ADD(name_len, mbedtls_asn1_write_len(&c, cri_buf, name_len));
+    CSR_ASN1_ADD(name_len, mbedtls_asn1_write_tag(&c, cri_buf,
+        MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_SET));
+    CSR_ASN1_ADD(name_len, mbedtls_asn1_write_len(&c, cri_buf, name_len));
+    CSR_ASN1_ADD(name_len, mbedtls_asn1_write_tag(&c, cri_buf,
+        MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_SEQUENCE));
+    cri_len += name_len;
+
+    CSR_ASN1_ADD(cri_len, mbedtls_asn1_write_int(&c, cri_buf, 0));
+    CSR_ASN1_ADD(cri_len, mbedtls_asn1_write_len(&c, cri_buf, cri_len));
+    CSR_ASN1_ADD(cri_len, mbedtls_asn1_write_tag(&c, cri_buf,
+        MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_SEQUENCE));
+    const unsigned char* cri = c;
+
+    uint8_t hash[32];
+    size_t hash_len = 0;
+    status = psa_hash_compute(PSA_ALG_SHA_256, cri, cri_len, hash, sizeof(hash), &hash_len);
+    if (status != PSA_SUCCESS) {
+        ESP_LOGE(TAG, "CSR hash failed: %d", status);
+        goto cleanup;
+    }
+
+    // The DS lock wait is 0 until a TLS handshake raises it; a 0 wait fails
+    // outright if another DS operation happens to be in flight.
+    esp_rsa_ds_opaque_set_session_timeout(5000);
+    size_t sig_len = 0;
+    status = psa_sign_hash(ds_key_id, PSA_ALG_RSA_PKCS1V15_SIGN(PSA_ALG_SHA_256),
+                           hash, hash_len, sig, rsa_bytes, &sig_len);
+    if (status != PSA_SUCCESS) {
+        ESP_LOGE(TAG, "DS signature failed: %d", status);
+        goto cleanup;
+    }
+
+    // CertificationRequest ::= SEQUENCE { certificationRequestInfo,
+    // signatureAlgorithm (sha256WithRSAEncryption), signature BIT STRING }
+    unsigned char* d = der_buf + der_size;
+    size_t der_len = 0;
+    CSR_ASN1_ADD(der_len, mbedtls_asn1_write_bitstring(&d, der_buf, sig, sig_len * 8));
+    CSR_ASN1_ADD(der_len, mbedtls_asn1_write_algorithm_identifier_ext(&d, der_buf,
+        MBEDTLS_OID_PKCS1_SHA256, MBEDTLS_OID_SIZE(MBEDTLS_OID_PKCS1_SHA256), 0, 1));
+    CSR_ASN1_ADD(der_len, mbedtls_asn1_write_raw_buffer(&d, der_buf, cri, cri_len));
+    CSR_ASN1_ADD(der_len, mbedtls_asn1_write_len(&d, der_buf, der_len));
+    CSR_ASN1_ADD(der_len, mbedtls_asn1_write_tag(&d, der_buf,
+        MBEDTLS_ASN1_CONSTRUCTED | MBEDTLS_ASN1_SEQUENCE));
+#undef CSR_ASN1_ADD
+
+    // base64 (4/3 + padding), a newline per 64 chars, header/footer, NUL
+    const size_t pem_size = (der_len * 4) / 3 + der_len / 48 + 160;
+    pem = malloc(pem_size);
+    if (pem == NULL) {
+        ret = ESP_ERR_NO_MEM;
+        goto cleanup;
+    }
+    size_t pem_len = 0;
+    mbret = mbedtls_pem_write_buffer("-----BEGIN CERTIFICATE REQUEST-----\n",
+                                     "-----END CERTIFICATE REQUEST-----\n",
+                                     d, der_len, pem, pem_size, &pem_len);
     if (mbret != 0) {
-        ESP_LOGE(TAG, "mbedtls_pk_wrap_psa failed: -0x%04X", -mbret);
+        ESP_LOGE(TAG, "CSR PEM encode failed: -0x%04X", (unsigned)-mbret);
         goto cleanup;
     }
 
-    // Build the CSR (same parameters as initial provisioning)
-    mbedtls_x509write_csr_set_md_alg(&req, MBEDTLS_MD_SHA256);
-    mbedtls_x509write_csr_set_key_usage(&req, MBEDTLS_X509_KU_DIGITAL_SIGNATURE);
-    mbedtls_x509write_csr_set_ns_cert_type(&req, MBEDTLS_X509_NS_CERT_TYPE_SSL_CLIENT);
-
-    char cn[128];
-    snprintf(cn, sizeof(cn), "CN=%s", kd_common_get_device_name());
-    mbret = mbedtls_x509write_csr_set_subject_name(&req, cn);
-    if (mbret != 0) {
-        ESP_LOGE(TAG, "set_subject_name failed: %d", mbret);
-        goto cleanup;
-    }
-
-    mbedtls_x509write_csr_set_key(&req, &pk);
-
-    csr_buffer = (uint8_t*)malloc(CRYPTO_PEM_BUFFER_SIZE);
-    if (csr_buffer == NULL) {
-        ESP_LOGE(TAG, "malloc failed for CSR buffer");
-        goto cleanup;
-    }
-
-    mbret = mbedtls_x509write_csr_pem(&req, csr_buffer, CRYPTO_PEM_BUFFER_SIZE);
-    if (mbret != 0) {
-        ESP_LOGE(TAG, "csr_pem failed: %d", mbret);
-        goto cleanup;
-    }
-
-    // Store the new CSR (overwrites the old one)
-    ret = crypto_storage_store_csr(csr_buffer, strlen((const char*)csr_buffer));
+    ret = crypto_storage_store_csr(pem, strlen((const char*)pem));
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to store regenerated CSR");
         goto cleanup;
     }
 
-    ESP_LOGI(TAG, "CSR regenerated from DS key for cert renewal");
+    ESP_LOGI(TAG, "CSR regenerated from DS key (%u-bit RSA, CN=%s)",
+             ds_ctx->rsa_length_bits, cn);
     ret = ESP_OK;
 
 cleanup:
-    mbedtls_x509write_csr_free(&req);
-    mbedtls_pk_free(&pk);
-    free(csr_buffer);
     if (ds_key_id != 0) {
         psa_destroy_key(ds_key_id);
     }
+    mbedtls_x509_crt_free(&crt);
+    free(cert_pem);
+    free(cri_buf);
+    free(der_buf);
+    free(sig);
+    free(pem);
     mbedtls_platform_zeroize(ds_ctx->esp_ds_data, sizeof(esp_ds_data_t));
     free(ds_ctx->esp_ds_data);
     free(ds_ctx);
